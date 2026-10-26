@@ -104,11 +104,13 @@ def _insert_version(
     kind: str,
     nodes_json: str,
     edges_json: str,
+    keep_no: int | None = None,
 ) -> int:
     """Insert one snapshot inside the caller's transaction and return its number.
 
     Numbers are MAX+1 per flow and never reused; afterwards only the newest
-    ``MAX_VERSIONS_PER_FLOW`` rows of the flow are kept.
+    ``MAX_VERSIONS_PER_FLOW`` rows of the flow are kept, except ``keep_no``
+    (the version a restore is reading from) which is never trimmed.
     """
     version_no = (
         conn.execute(
@@ -134,8 +136,9 @@ def _insert_version(
         ),
     )
     conn.execute(
-        "DELETE FROM flow_versions WHERE flow_id = ? AND version_no <= ?",
-        (flow_id, version_no - MAX_VERSIONS_PER_FLOW),
+        "DELETE FROM flow_versions WHERE flow_id = ? AND version_no <= ? "
+        "AND version_no != ?",
+        (flow_id, version_no - MAX_VERSIONS_PER_FLOW, keep_no if keep_no is not None else -1),
     )
     return version_no
 
@@ -524,6 +527,7 @@ async def restore_flow_version(
             "auto",
             flow_row["nodes_json"],
             flow_row["edges_json"],
+            keep_no=version_no,
         )
         conn.execute(
             "UPDATE flows SET nodes_json = ?, edges_json = ?, updated_at = ? WHERE flow_id = ?",

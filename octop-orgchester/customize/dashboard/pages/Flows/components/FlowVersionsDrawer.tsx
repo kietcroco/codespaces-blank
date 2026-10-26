@@ -112,8 +112,14 @@ export default function FlowVersionsDrawer({
       return;
     }
     try {
-      await onRestored();
-      message.success(`Restored v${versionNo}`);
+      try {
+        await onRestored();
+        message.success(`Restored v${versionNo}`);
+      } catch (err) {
+        const text = apiErrorMessage(err, "Restored, but failed to reload the canvas; reopen the flow");
+        setActionError(text);
+        message.error(text);
+      }
       await refresh();
     } finally {
       busy.current = false;

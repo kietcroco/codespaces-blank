@@ -3,7 +3,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../../api/request", () => ({ request: vi.fn() }));
+vi.mock("@/utils/antdMessage", () => ({ message: { success: vi.fn(), error: vi.fn() } }));
 import { request } from "../../../api/request";
+import { message } from "@/utils/antdMessage";
 import FlowVersionsDrawer, { type FlowVersionSummary } from "./FlowVersionsDrawer";
 const api = vi.mocked(request, true);
 beforeEach(() => api.mockReset());
@@ -140,5 +142,34 @@ describe("FlowVersionsDrawer", () => {
     expect(onRestored).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByText("Flow versions")).toBeInTheDocument();
+  });
+
+  it("shows the success message and sends one POST on a double-click Restore", async () => {
+    const success = vi.mocked(message.success);
+    success.mockClear();
+    api.mockResolvedValueOnce([V3]);
+    const { onRestored } = setup();
+    await screen.findByText("Release");
+    api.mockResolvedValue({ flow: {}, restored_from: 3, backup_version_no: 4 } as never);
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await userEvent.dblClick(await screen.findByRole("button", { name: "Yes, restore" }));
+    await waitFor(() => expect(onRestored).toHaveBeenCalledTimes(1));
+    expect(posts().filter(([p]) => String(p).endsWith("/restore"))).toHaveLength(1);
+    expect(success).toHaveBeenCalledWith("Restored v3");
+  });
+
+  it("reports a failed canvas reload after restore and releases the busy state", async () => {
+    const onRestored = vi.fn().mockRejectedValueOnce(new Error("reload boom")).mockResolvedValue(undefined);
+    api.mockImplementation((async (_p: string, o?: { method?: string }) =>
+      o?.method === "POST" ? { flow: {}, restored_from: 3, backup_version_no: 4 } : [V3]) as never);
+    const { onClose } = setup({ onRestored });
+    await screen.findByText("Release");
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Yes, restore" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("reload boom");
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Yes, restore" }));
+    await waitFor(() => expect(onRestored).toHaveBeenCalledTimes(2));
   });
 });

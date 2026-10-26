@@ -1205,6 +1205,23 @@ async def test_version_numbers_never_reused_and_capped(env):
     assert (await c.get(f"/api/flows/{flow_id}/versions/5", headers=auth)).status_code == 404
 
 
+async def test_restore_oldest_at_cap_keeps_restored_version(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    for _ in range(50):
+        await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+    r = await c.post(f"/api/flows/{flow_id}/versions/1/restore", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["restored_from"] == 1
+    assert (await c.get(f"/api/flows/{flow_id}/versions/1", headers=auth)).status_code == 200
+    listing = await c.get(f"/api/flows/{flow_id}/versions", headers=auth)
+    assert len(listing.json()) == 51
+    r = await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+    assert r.status_code == 201
+    listing = await c.get(f"/api/flows/{flow_id}/versions", headers=auth)
+    assert len(listing.json()) == 50
+
+
 async def test_restore_backup_obeys_cap(env):
     c, _, auth = env
     flow_id = await _new_flow(c, auth)
