@@ -1,5 +1,5 @@
 // customize/dashboard/pages/Flows/components/FlowCanvas.test.tsx
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../../api/request", () => ({ request: vi.fn() }));
@@ -196,6 +196,38 @@ describe("FlowCanvas validation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText(ERR.message)).toBeInTheDocument();
     expect(calls((u) => u === "/flows/f1/run")).toHaveLength(0);
+  });
+
+  const runBodies = () =>
+    calls((u) => u === "/flows/f1/run").map(([, i]) => JSON.parse((i as { body: string }).body));
+
+  it("Dry run saves, validates, then opens the drawer in dry-run mode (draft flow)", async () => {
+    setup({ valid: true, issues: [] }, "draft");
+    render(<FlowCanvas flowId="f1" />);
+    await screen.findByText("Call agent");
+    await userEvent.click(screen.getByRole("button", { name: "Dry run" }));
+    await waitFor(() => expect(runBodies()).toHaveLength(1));
+    expect(runBodies()[0]).toEqual({ input: {}, dry_run: true });
+    expect(calls((u, i) => u === "/flows/f1" && i?.method === "PATCH")).toHaveLength(1);
+    expect(calls((u) => u === "/flows/f1/validate")).toHaveLength(1);
+  });
+
+  it("Dry run does not POST /run when validation has errors", async () => {
+    setup({ valid: false, issues: [ERR] });
+    render(<FlowCanvas flowId="f1" />);
+    await screen.findByText("Call agent");
+    await userEvent.click(screen.getByRole("button", { name: "Dry run" }));
+    expect(await screen.findByText(ERR.message)).toBeInTheDocument();
+    expect(calls((u) => u === "/flows/f1/run")).toHaveLength(0);
+  });
+
+  it("normal Run still POSTs /run without dry_run", async () => {
+    setup({ valid: true, issues: [] });
+    render(<FlowCanvas flowId="f1" />);
+    await screen.findByText("Call agent");
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(runBodies()).toHaveLength(1));
+    expect(runBodies()[0]).toEqual({ input: {} });
   });
 
   it("fails open when validate request errors", async () => {

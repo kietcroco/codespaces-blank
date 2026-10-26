@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
 import { Alert, Button, Dropdown, Input, Spin, Tag, type MenuProps } from "antd";
-import { CheckCircle2, History, Play, Plus, Save as SaveIcon } from "lucide-react";
+import { CheckCircle2, FlaskConical, History, Play, Plus, Save as SaveIcon } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -182,7 +182,7 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
   // Run button, after saving current canvas state — see handleRun);
   // "history" opens straight to the History tab and never auto-runs (the
   // toolbar's History button). `null` keeps the drawer closed.
-  const [drawerMode, setDrawerMode] = useState<"run" | "history" | null>(null);
+  const [drawerMode, setDrawerMode] = useState<"run" | "dry-run" | "history" | null>(null);
   const [inspectorNode, setInspectorNode] = useState<Node | null>(null);
   const [issues, setIssues] = useState<FlowIssue[]>([]);
 
@@ -317,12 +317,12 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
   // only open the drawer (which then runs the just-saved graph) if that
   // save succeeds. On failure, handleSave already showed the error; don't
   // open the drawer on top of it.
-  const handleRun = async () => {
+  const handleRun = async (mode: "run" | "dry-run" = "run") => {
     const saved = await handleSave(false); // Run validates once itself, below
     if (!saved) return;
     const found = await runValidation();
     if (hasErrors(found)) return;
-    setDrawerMode("run");
+    setDrawerMode(mode);
   };
 
   // I2 fix: browsing run history must never trigger a new real run — this
@@ -412,6 +412,14 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
           Run
         </Button>
         <Button
+          icon={<FlaskConical size={14} />}
+          aria-pressed={drawerMode === "dry-run"}
+          loading={saving}
+          onClick={() => void handleRun("dry-run")}
+        >
+          Dry run
+        </Button>
+        <Button
           icon={<History size={14} />}
           aria-pressed={drawerMode === "history"}
           onClick={handleViewHistory}
@@ -481,6 +489,7 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         flowId={flowId}
         open={drawerMode !== null}
         initialTab={drawerMode === "history" ? "history" : "run"}
+        dryRun={drawerMode === "dry-run"}
         onClose={() => setDrawerMode(null)}
       />
     </div>

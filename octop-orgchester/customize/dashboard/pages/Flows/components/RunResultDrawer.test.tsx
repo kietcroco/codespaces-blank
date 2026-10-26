@@ -38,6 +38,30 @@ describe("RunResultDrawer", () => {
     expect(await screen.findByText("flow must be active to run — activate it first")).toBeInTheDocument();
   });
 
+  it("with dryRun, POSTs dry_run: true, titles the drawer Dry run and tags the result", async () => {
+    api.mockResolvedValueOnce({
+      run_id: null, dry_run: true, status: "succeeded", output: {}, error: null, steps: [],
+    });
+    render(<RunResultDrawer flowId="f1" open dryRun onClose={() => {}} />);
+    expect(await screen.findByText("dry run")).toBeInTheDocument();
+    expect(screen.getByText("Dry run")).toBeInTheDocument();
+    expect(api).toHaveBeenCalledWith(
+      "/flows/f1/run",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ input: {}, dry_run: true }) }),
+    );
+  });
+
+  it("without dryRun, the POST body is exactly { input: {} }", async () => {
+    api.mockResolvedValueOnce({ run_id: "r", status: "succeeded", output: {}, error: null, steps: [] });
+    render(<RunResultDrawer flowId="f1" open onClose={() => {}} />);
+    await screen.findByText(/succeeded/i);
+    expect(api).toHaveBeenCalledWith(
+      "/flows/f1/run",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ input: {} }) }),
+    );
+    expect(screen.getByText("Run flow")).toBeInTheDocument();
+  });
+
   // I2: initialTab="history" must open straight to History and never
   // auto-POST /run — the regression this drawer used to have (opening it
   // at all, for any reason, always triggered a fresh real run).

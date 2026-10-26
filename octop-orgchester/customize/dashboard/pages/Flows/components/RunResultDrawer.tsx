@@ -30,7 +30,9 @@ export interface FlowRunStep {
 
 /** Shape of `POST /flows/:flowId/run`'s response. */
 export interface FlowRunResult {
-  run_id: string;
+  /** `null` for a dry run — nothing is persisted. */
+  run_id: string | null;
+  dry_run?: boolean;
   status: string;
   output: unknown;
   error: string | null;
@@ -121,6 +123,8 @@ export interface RunResultDrawerProps {
    * "Run"/"History" toolbar buttons set this.
    */
   initialTab?: "run" | "history";
+  /** Sends `dry_run: true` with the run (nothing persisted, agents not called). */
+  dryRun?: boolean;
 }
 
 export default function RunResultDrawer({
@@ -128,6 +132,7 @@ export default function RunResultDrawer({
   open,
   onClose,
   initialTab = "run",
+  dryRun = false,
 }: RunResultDrawerProps): JSX.Element {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<FlowRunResult | null>(null);
@@ -154,7 +159,7 @@ export default function RunResultDrawer({
       try {
         const data = await request<FlowRunResult>(`/flows/${flowId}/run`, {
           method: "POST",
-          body: JSON.stringify({ input: {} }),
+          body: JSON.stringify(dryRun ? { input: {}, dry_run: true } : { input: {} }),
         });
         if (active) setResult(data);
       } catch (err) {
@@ -168,7 +173,7 @@ export default function RunResultDrawer({
     return () => {
       active = false;
     };
-  }, [open, flowId, initialTab]);
+  }, [open, flowId, initialTab, dryRun]);
 
   const loadHistory = useCallback(() => {
     if (historyLoaded || historyLoading) return;
@@ -213,6 +218,7 @@ export default function RunResultDrawer({
     <>
       <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
         <Tag color={STATUS_DOT[result.status] ?? "#52525b"}>{result.status}</Tag>
+        {result.dry_run && <Tag>dry run</Tag>}
         {result.error && <Text type="danger">{truncate(result.error)}</Text>}
       </div>
       <StepList steps={result.steps} />
@@ -259,7 +265,7 @@ export default function RunResultDrawer({
   );
 
   return (
-    <Drawer open={open} onClose={onClose} title="Run flow" width={480} destroyOnClose>
+    <Drawer open={open} onClose={onClose} title={dryRun ? "Dry run" : "Run flow"} width={480} destroyOnClose>
       <Tabs
         defaultActiveKey={initialTab}
         onChange={(key) => {
