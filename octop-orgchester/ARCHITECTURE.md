@@ -235,6 +235,8 @@ này, chỉ hết khi chạy ở máy/server thật có internet.
 
 ## 5. Cấu hình Provider LLM
 
+> **Cập nhật 2026-10-26:** seeder mới `scripts/seed-sample-data.py` (stdlib, không cần `jq`) thay phần seed cũ; `docker compose up` tự chạy qua service `seed` (idempotent). Tạo provider `vietapi` (OpenAI-compatible) + 6 agency + 10 expert + 2 flow mẫu (Feature Delivery, Bug Triage). Key đọc từ `.env.seed` (gitignore; mẫu: `.env.seed.example`) — không commit key. Đã chạy thử flow Bug Triage với model thật: `succeeded`.
+
 **Từ 2026-10-25, `scripts/seed-sample-data.sh` tự tạo sẵn 1 provider
 placeholder** (`octop-test-provider`, kind `openai`, model `gpt-4o-mini`)
 và đặt làm active-model toàn hệ thống, để Models UI và `default_model`
@@ -348,6 +350,29 @@ node driver.mjs
   xem mục 5) — thay bằng key thật khi cần test chat. Lưu ý: node
   `agent` của Flow gọi qua cùng cơ chế agent thật của Octop, nên cũng
   **không chat được thật** với provider placeholder này, cùng lý do.
+
+- **Cập nhật 2026-10-26 (phiên làm phase #2):**
+  - **Roadmap Flow: 38 mục (§9.2), xong 2 — #1 (gate `flows.status`) và #2
+    (retry node agent: `max_retries` 0–5, `retry_delay` 0–30s).** #2 đã
+    merge vào `main` (commit `0710927`), **chưa cài vào `Octop/` thật**
+    (hướng dẫn copy tay: `customize/README.md`). **Cập nhật cuối phiên: #3 (validate tĩnh), #4 (dry-run), #5 (MiniMap), #6 (panel tài liệu) và #7 (filter template) và #8 (template mẫu) và #9 (versioning) đã xong và merge vào `main`**
+    (chưa cài vào `Octop/`). Việc kế tiếp: **#10 AI copilot tạo flow từ mô tả** (effort lớn nhất, cần bàn kỹ trước), rồi nhóm A (#11–18)… Mục #11–38 là phần bổ sung sau khi so sánh với orchester.
+  - **Cách test trên Windows (Docker):** `bash scripts/sandbox/setup.sh`
+    (1 lần: clone Octop ở commit nền `6797d0e4` — vì `Octop/` HEAD đã mới
+    hơn, trùng migration 022–024 và patch không áp được — rồi cài Agency +
+    Flow, build 2 image test) → `scripts/sandbox/sb.sh sync|py|ui`. Đặt
+    `CUSTOMIZE=<customize/ của worktree>` khi làm trong worktree. Baseline:
+    backend 33 test (engine + flow API + agency API), dashboard Flows 16 test.
+    `setup.sh` chưa được chạy end-to-end từ trạng thái trống (mới chạy
+    `sb.sh` trên sandbox có sẵn).
+  - **Container đang chạy** từ image `octop:latest` build từ sandbox (không
+    phải từ `Octop/` thật): `docker compose up -d` trong `octop-orgchester/`,
+    http://localhost:8088, mật khẩu admin ở `data/credential.txt`. Service
+    `seed` tự nạp dữ liệu mẫu (xem §5): provider `vietapi`, 6 agency, 10
+    expert, 2 flow (Feature Delivery, Bug Triage). API key để trong
+    `.env.seed` (gitignore, mẫu `.env.seed.example`).
+  - Chưa commit: `ARCHITECTURE.md`, `docker-compose.yml`, `.gitignore`,
+    `scripts/seed-sample-data.{py,sh}`, `scripts/sandbox/`, `.env.seed.example`.
 
 ## 8. Backlog — việc cần làm lượt sau (phát hiện khi test dữ liệu mẫu)
 
@@ -580,17 +605,65 @@ Top ưu tiên cho roadmap, dự kiến mỗi mục làm ở 1 phase/phiên chat 
 
 1. ~~Gắn cột `flows.status` vào logic `/run`~~ — **xong, xem §9.1b.**
 2. ~~Retry cho node `agent` khi gọi lỗi tạm thời~~ — **xong (2026-10-26, merge vào `main`; chưa cài vào `Octop/`)**. Config node `max_retries` (0–5, mặc định 0) + `retry_delay` (0–30s, mặc định 1s); lỗi agent không tồn tại/không thuộc user không retry. Không patch/migration mới. Plan: `customize/docs/superpowers/plans/2026-10-26-flow-agent-retry.md`; hướng dẫn nâng cấp: `customize/README.md`. Việc để dành cho #3: node agent chưa chọn agent (`agent_id=None`) hiện có thể bị retry vô ích — validate tĩnh nên chặn.
-3. Validate tĩnh trước khi lưu (thiếu node bắt đầu, field trống...).
-4. Dry-run mode — rẻ vì `call_agent` đã dependency-injected sẵn trong
-   `engine.py`.
-5. MiniMap trên canvas (`@xyflow/react` đã có sẵn, chỉ cần import).
-6. Panel tài liệu mô tả flow.
-7. Cú pháp filter template `{{path|filter:arg}}`.
-8. Template mẫu khởi tạo flow.
-9. Flow versioning (snapshot/restore).
+3. ~~Validate tĩnh~~ — **xong (2026-10-26, merge vào `main`; chưa cài vào `Octop/`)**. Module `flows/validate.py` (12 lỗi + 3 cảnh báo), endpoint `POST /flows/{id}/validate`; chặn kích hoạt (`PATCH status=active`) và `/run` khi còn lỗi (422), lưu nháp không bị chặn; canvas có nút Validate, panel lỗi, viền đỏ node. Không patch/migration mới. Plan: `customize/docs/superpowers/plans/2026-10-26-flow-static-validate.md`.
+4. ~~Dry-run mode~~ — **xong (2026-10-26, merge vào `main`; chưa cài vào `Octop/`)**. `POST /flows/{id}/run` nhận `dry_run: true`: thay `call_agent` bằng stub `[dry-run] agent <id> would receive: <prompt>`, không gọi/tra agent, không ghi lịch sử, cho phép chạy flow nháp; vẫn kiểm tra quyền sở hữu và validate tĩnh. Canvas có nút "Dry run". Plan: `customize/docs/superpowers/plans/2026-10-26-flow-dry-run.md`.
+5. ~~MiniMap trên canvas~~ — **xong (2026-10-26, merge vào `main`; chưa cài vào `Octop/`)**. `<MiniMap pannable zoomable>` tô màu theo loại node (`minimapNodeColor`). Plan: `customize/docs/superpowers/plans/2026-10-26-flow-minimap.md`.
+6. ~~Panel tài liệu mô tả flow~~ — **xong (2026-10-26, merge vào `main`; chưa cài vào `Octop/`)**. Drawer "Docs" trên canvas (markdown, Edit/Preview, nút Use template), lưu vào cột `flows.description` (giới hạn 20000 ký tự, không migration); thẻ flow ở danh sách chỉ hiện bản tóm tắt một dòng. Lưu ý còn tồn: preview dùng `LazyMarkdown` của Octop, mermaid ở đó để `securityLevel: "loose"` (vấn đề có sẵn của Octop, không thuộc `customize/`). Plan: `customize/docs/superpowers/plans/2026-10-26-flow-docs-panel.md`.
+7. ~~Cú pháp filter template `{{path|filter:arg}}`~~ — **xong (2026-10-26, merge vào `main`)**. Module `flows/template.py`: đường dẫn chấm (`{{user.name}}`, `{{items.0}}`), 7 filter (`upper lower trim default truncate length json`), lỗi template thành step failed `template error: ...` và bị validate tĩnh chặn (`bad_template`). Lưu ý: biến có giá trị `None` giờ render rỗng thay vì "None". Plan: `customize/docs/superpowers/plans/2026-10-26-flow-template-filters.md`.
+8. ~~Template mẫu khởi tạo flow~~ — **xong (2026-10-26, merge vào `main`)**. Nút "From template" ở trang Flows (modal 3 mẫu: Ask an agent, Branch on a reply, Two-step pipeline; `flowTemplates.ts`), tạo flow + nodes/edges + mô tả markdown; agent để trống, phải chọn trước khi kích hoạt. Chỉ frontend. Plan: `customize/docs/superpowers/plans/2026-10-26-flow-templates.md`.
+9. ~~Flow versioning (snapshot/restore)~~ — **xong (2026-10-26, merge vào `main`; chưa build vào container đang chạy)**. Migration mới `024_flow_versions.sql`/`.pg.sql` (bảng `flow_versions`, `_schema_version` = 24; bản pg chưa chạy thử), 4 route `/flows/{id}/versions[...]` (tạo, liệt kê, xem, restore; tối đa 50 bản/flow, restore tự sao lưu bản hiện tại, flow active + bản lỗi validate thì 422), drawer "Versions" trên canvas. Còn tồn: Postgres chạy đồng thời 2 request tạo version có thể 500 do UNIQUE (SQLite an toàn). Plan: `customize/docs/superpowers/plans/2026-10-26-flow-versions.md`.
 10. AI copilot tự tạo flow từ mô tả ngôn ngữ tự nhiên — effort lớn
     nhất, nên làm sau khi có #2/#3 (retry + validate) để tránh copilot
     tạo ra flow hỏng ngay từ đầu.
+
+**Bổ sung 2026-10-26 — các chức năng orchester có mà roadmap #1–10 chưa
+có** (từ báo cáo so sánh với `orchester/apps/web/lib/flows/` và
+`components/flows/`; effort S/M/L là ước lượng thô). Mỗi mục vẫn làm ở 1
+phase riêng, có plan riêng. Thứ tự gợi ý: nhóm A trước (rẻ, mở khóa
+nhiều thứ), rồi B–C, D–E sau cùng.
+
+*A. Node & engine cơ bản*
+11. Node `http` (SSRF guard, timeout, retry/backoff), `delay`, `note` — M.
+12. Node `switch` (nhiều nhánh) + thêm toán tử so sánh (regex, in, rỗng) — S.
+13. Node `transform` / gán biến (set variable) — M.
+14. Node `try_catch` + chính sách lỗi theo node (dừng / bỏ qua / rẽ nhánh lỗi) — M.
+15. Retry nâng cao: backoff mũ + jitter, dùng chung cho `http` và các node khác — S.
+16. Node `llm_prompt` (gọi thẳng model, không qua agent) và `kb_search` — M.
+17. Node `loop_for_each`, `parallel` (giới hạn số nhánh, mặc định 10) — L.
+18. Node `subflow` (giới hạn độ sâu 5, chặn vòng lặp giữa các flow, ánh xạ input/output) — L.
+
+*B. Chạy nền & an toàn vận hành*
+19. Chạy nền (không giữ request) + polling trạng thái run; tiền đề cho #20, #21 — L.
+20. Stream tiến trình trực tiếp (SSE), trạng thái từng node trên canvas — L.
+21. Giới hạn chạy đồng thời / flow, timeout từng bước, hủy run, dọn run treo (reaper) — S–M.
+22. Retention: xóa run/version cũ theo hạn — S.
+
+*C. Trigger*
+23. Trigger `webhook` (secret trong đường dẫn, HMAC tùy chọn) — M.
+24. Trigger lịch (cron + múi giờ), tái dùng APScheduler của Octop — M.
+25. Trigger theo tin nhắn / hội thoại; gọi flow qua API/MCP — M–L.
+26. UI quản lý webhook và lịch (orchester cũng chưa có) — S.
+
+*D. Tương tác người & thông báo*
+27. Node `wait_human`: tạm dừng, lưu trạng thái, link duyệt dùng 1 lần, tiếp tục run — L.
+28. Node `notify` (gửi tin tới người/kênh) — M.
+29. Hộp thoại Run có ô nhập dữ liệu đầu vào + tick dry-run (đi cùng #4) — S.
+
+*E. Trình dựng (frontend)*
+30. Undo/redo (Ctrl+Z / Ctrl+Shift+Z) — S.
+31. Copy / paste / nhân bản node (Ctrl+C/V/D) — S.
+32. Tự động sắp xếp (auto-layout) — S.
+33. Inspector theo từng loại field (cron, key-value, mã, thời lượng, picker agent/model) và badge lỗi trên node (nối với #3) — M.
+34. Palette node có nhóm + tìm kiếm — S.
+35. Gom nhóm node (group) và tách thành subflow (extract) — M–L.
+36. Import / export flow dạng JSON — S.
+37. Lịch sử chạy có trace AI từng bước (agent, model, token, chi phí) — M.
+38. Panel quan hệ giữa các flow, cảnh báo tác động khi xóa, mô tả flow tự động — M.
+
+*Không áp dụng / để sau:* workspace + RLS (Octop theo user, xem
+`design-flow.md` §3); node media (ảnh/video/giọng nói/nhạc),
+`integration`, `spreadsheet`, `code` (cần cơ chế sandbox) — chỉ làm khi có
+nhu cầu cụ thể; flow "kind" pipeline/action.
 
 Khi bắt đầu 1 phase mới ở phiên chat mới: đọc `design-flow.md` +
 mục 9.1/9.1b/9.2 này trước, rồi dùng lại đúng quy trình mục 3 (dựa trên

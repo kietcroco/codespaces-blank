@@ -51,3 +51,22 @@ services:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_BASE_URL=${LANGFUSE_BASE_URL:-}
+
+  # Nạp dữ liệu mẫu (provider, agency, expert, flow) ngay khi khởi động.
+  # Chạy 1 lần rồi thoát; idempotent nên `docker compose up` lại không tạo trùng.
+  seed:
+    image: python:3.12-slim
+    depends_on:
+      - octop
+    restart: "no"
+    working_dir: /app
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ${OCTOP_DATA:-./data}:/data:ro
+    env_file:
+      - path: .env.seed
+        required: false
+    environment:
+      - OCTOP_BASE=http://octop:${OCTOP_PORT:-8088}/api
+      - OCTOP_CRED_FILE=/data/credential.txt
+    command: ["python", "scripts/seed-sample-data.py"]

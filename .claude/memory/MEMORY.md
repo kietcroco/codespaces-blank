@@ -1,0 +1,4 @@
+- [Plan location](octop-orgchester-plan-location.md) — "kiểm tra tài liệu và plan" nghĩa là đọc octop-orgchester/, không phải .worktree
+- [Flow status](octop-orgchester-flow-status.md) — tiến độ Flow (2/38 phase xong) và việc kế tiếp (#3)
+- [Phong cách báo cáo](feedback-vietnamese-and-progress-report.md) — tiếng Việt; luôn báo phase X/N, task Y/M; merge rồi báo trước khi sang phase mới
+- [Test sandbox](octop-test-sandbox.md) — chạy pytest/vitest bằng Docker sandbox (commit nền 6797d0e4)
