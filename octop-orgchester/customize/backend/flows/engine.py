@@ -74,7 +74,7 @@ def _retry_policy(config: dict[str, Any]) -> tuple[int, float]:
     """Read (max_retries, retry_delay) from a node config, clamped to the caps.
 
     Absent / None / "" fall back to the defaults. Raises ValueError on a bool
-    or a non-numeric value.
+    or a non-numeric or non-finite value.
     """
 
     def _number(key: str) -> float | None:
