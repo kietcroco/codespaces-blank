@@ -245,6 +245,21 @@ là `max_retries × retry_delay` (tối đa 5 × 30s) cho mỗi node agent cộn
 thời gian gọi; reverse proxy có timeout ngắn hơn có thể cắt request
 trong khi run vẫn tiếp tục chạy ở server.
 
+**Validate (kiểm tra tĩnh).** `customize/backend/flows/validate.py` (hàm thuần,
+không FastAPI/DB, không bao giờ raise với dữ liệu hỏng) trả danh sách `FlowIssue`
+(`level`, `code`, `message`, `node_id`). Mức `error`: `duplicate_node_id`,
+`unknown_node_type`, `no_trigger`, `multiple_triggers`, `agent_missing_agent`,
+`agent_missing_prompt`, `agent_bad_retry`, `condition_bad_op`,
+`condition_missing_left`, `condition_bad_handle`, `edge_dangling`, `cycle`.
+Mức `warning`: `unreachable_node`, `condition_branch_missing`,
+`multiple_outgoing`. Chốt chặn (lỗi 422, `detail` dạng
+`"flow has N validation error(s): <lỗi đầu tiên>"`): (1) `PATCH` với
+`status = "active"` — validate đồ thị gửi kèm trong cùng request nếu có, nếu không
+thì đồ thị đã lưu, trước khi ghi bất cứ gì; (2) `POST .../run` — validate trước
+khi gọi engine, nên flow đang `active` nhưng bị sửa thành sai không chạy được.
+Bản nháp không bao giờ bị chặn: lưu node/edge, đổi tên, và chuyển về `draft` luôn
+được phép.
+
 ## 9. Frontend
 
 - `customize/dashboard/pages/Flows/index.tsx`: danh sách flow (antd
@@ -275,21 +290,6 @@ trong khi run vẫn tiếp tục chạy ở server.
   API ngoài) thay vì port cả 28 loại một lần.
 - Trigger tự động: để CronJobs gọi `POST .../run` là đủ cho "theo
   lịch"; webhook/conversation để sau nếu có nhu cầu cụ thể.
-
-**Validate (kiểm tra tĩnh).** `customize/backend/flows/validate.py` (hàm thuần,
-không FastAPI/DB, không bao giờ raise với dữ liệu hỏng) trả danh sách `FlowIssue`
-(`level`, `code`, `message`, `node_id`). Mức `error`: `duplicate_node_id`,
-`unknown_node_type`, `no_trigger`, `multiple_triggers`, `agent_missing_agent`,
-`agent_missing_prompt`, `agent_bad_retry`, `condition_bad_op`,
-`condition_missing_left`, `condition_bad_handle`, `edge_dangling`, `cycle`.
-Mức `warning`: `unreachable_node`, `condition_branch_missing`,
-`multiple_outgoing`. Chốt chặn (lỗi 422, `detail` dạng
-`"flow has N validation error(s): <lỗi đầu tiên>"`): (1) `PATCH` với
-`status = "active"` — validate đồ thị gửi kèm trong cùng request nếu có, nếu không
-thì đồ thị đã lưu, trước khi ghi bất cứ gì; (2) `POST .../run` — validate trước
-khi gọi engine, nên flow đang `active` nhưng bị sửa thành sai không chạy được.
-Bản nháp không bao giờ bị chặn: lưu node/edge, đổi tên, và chuyển về `draft` luôn
-được phép.
 
 ## 11. Danh sách file (tổng kết)
 

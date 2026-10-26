@@ -605,3 +605,33 @@ async def test_run_invalid_active_flow_is_rejected_before_any_agent_call(env, mo
             "SELECT COUNT(*) AS c FROM flow_runs WHERE flow_id = ?", (flow_id,)
         ).fetchone()["c"]
     assert n == 0
+
+
+async def test_activate_with_null_nodes_does_not_bypass_gate(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    r = await c.patch(
+        f"/api/flows/{flow_id}", headers=auth, json={"nodes": None, "status": "active"}
+    )
+    assert r.status_code == 422, r.text
+    r = await c.get(f"/api/flows/{flow_id}", headers=auth)
+    assert r.json()["nodes"] == []
+    assert r.json()["status"] == "draft"
+
+
+async def test_null_nodes_and_edges_leave_stored_graph_unchanged(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "nn"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    nodes = _valid_nodes(agent_id)
+    await c.patch(
+        f"/api/flows/{flow_id}", headers=auth, json={"nodes": nodes, "edges": _VALID_EDGES}
+    )
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": None, "edges": None, "status": "active"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["nodes"] == nodes
+    assert r.json()["edges"] == _VALID_EDGES

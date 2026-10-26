@@ -281,28 +281,26 @@ async def patch_flow(
 ) -> dict[str, Any]:
     row = _require_owned_flow(server, user, flow_id)
     if body.status == "active":
-        # Gate only the transition to active; validate before writing anything.
-        raw_nodes = body.nodes if "nodes" in body.model_fields_set else None
-        raw_edges = body.edges if "edges" in body.model_fields_set else None
-        if raw_nodes is None:
-            raw_nodes = json.loads(row["nodes_json"])
-        if raw_edges is None:
-            raw_edges = json.loads(row["edges_json"])
+        # Any PATCH carrying status "active" is gated; validate before writing
+        # anything. Graph = nodes/edges sent in this request, else the stored one
+        # (null counts as omitted, same as the /validate route).
+        raw_nodes = body.nodes if body.nodes is not None else json.loads(row["nodes_json"])
+        raw_edges = body.edges if body.edges is not None else json.loads(row["edges_json"])
         issues = validate_graph(*_to_engine_graph(raw_nodes, raw_edges))
         if has_errors(issues):
             raise _validation_error(issues)
     updates: dict[str, Any] = {}
     if body.name is not None:
         updates["name"] = body.name.strip()
-    # description/nodes/edges/status use model_fields_set, not "is not None":
-    # a client can explicitly send ``null`` to CLEAR description, and an
-    # empty ``nodes``/``edges`` list or falsy ``status`` must still write —
-    # both are indistinguishable from "omitted" under an `is not None` check.
+    # description/status use model_fields_set, not "is not None": a client can
+    # explicitly send ``null`` to CLEAR description. nodes/edges use
+    # "is not None": null is treated as omitted (writing "null" would corrupt
+    # the stored graph), while an empty list still writes.
     if "description" in body.model_fields_set:
         updates["description"] = body.description
-    if "nodes" in body.model_fields_set:
+    if body.nodes is not None:
         updates["nodes_json"] = json.dumps(body.nodes)
-    if "edges" in body.model_fields_set:
+    if body.edges is not None:
         updates["edges_json"] = json.dumps(body.edges)
     if "status" in body.model_fields_set:
         updates["status"] = body.status
