@@ -1,2 +1,4 @@
 .claude/worktrees/
 .superpowers/
+__pycache__/
+*.pyc
