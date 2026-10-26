@@ -19,7 +19,7 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from octop.api.common.agent import assert_agent_owner
 from octop.api.deps import current_user, get_server
@@ -36,15 +36,17 @@ from octop.infra.utils.ulid import new_short_id
 
 router = APIRouter()
 
+DESCRIPTION_MAX_LENGTH = 20000
+
 
 class FlowCreateBody(BaseModel):
     name: str
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
 
 
 class FlowPatchBody(BaseModel):
     name: str | None = None
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=DESCRIPTION_MAX_LENGTH)
     nodes: list[dict[str, Any]] | None = None
     edges: list[dict[str, Any]] | None = None
     status: str | None = None

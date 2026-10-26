@@ -206,6 +206,8 @@ dùng cho các field JSON khác trong Octop.
 Ownership guard giống hệt `_require_owned_agency()` của Agency — copy
 pattern, đổi tên bảng.
 
+`description` là tài liệu markdown của flow, tối đa 20000 ký tự (vượt quá ⇒ 422); `null` xoá tài liệu.
+
 ## 8. Flow engine (module thuần Python, không phụ thuộc FastAPI)
 
 `customize/backend/flows/engine.py` — nhận `nodes`, `edges`, `input`

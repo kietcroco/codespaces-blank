@@ -862,3 +862,57 @@ async def test_normal_run_response_has_dry_run_false(env, _patch_fake_agent_call
     body = r.json()
     assert body["dry_run"] is False
     assert isinstance(body["run_id"], str)
+
+
+async def test_description_at_limit_is_saved(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    text = "a" * 20000
+    r = await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"description": text})
+    assert r.status_code == 200, r.text
+    got = await c.get(f"/api/flows/{flow_id}", headers=auth)
+    assert got.json()["description"] == text
+
+
+async def test_description_over_limit_rejected_on_patch_and_create(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"description": "keep me"})
+    too_long = "a" * 20001
+    r = await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"description": too_long})
+    assert r.status_code == 422, r.text
+    got = await c.get(f"/api/flows/{flow_id}", headers=auth)
+    assert got.json()["description"] == "keep me"
+    r = await c.post("/api/flows", headers=auth, json={"name": "X", "description": too_long})
+    assert r.status_code == 422, r.text
+
+
+async def test_description_null_clears(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"description": "doc"})
+    r = await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"description": None})
+    assert r.status_code == 200, r.text
+    got = await c.get(f"/api/flows/{flow_id}", headers=auth)
+    assert got.json()["description"] is None
+
+
+async def test_patch_description_only_leaves_graph_and_status(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "dd"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    nodes = _valid_nodes(agent_id)
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": nodes, "edges": _VALID_EDGES, "status": "active"},
+    )
+    assert r.status_code == 200, r.text
+    before = (await c.get(f"/api/flows/{flow_id}", headers=auth)).json()
+    r = await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"description": "# Docs"})
+    assert r.status_code == 200, r.text
+    after = (await c.get(f"/api/flows/{flow_id}", headers=auth)).json()
+    assert after["description"] == "# Docs"
+    assert after["status"] == "active"
+    assert after["nodes"] == before["nodes"]
+    assert after["edges"] == before["edges"]
