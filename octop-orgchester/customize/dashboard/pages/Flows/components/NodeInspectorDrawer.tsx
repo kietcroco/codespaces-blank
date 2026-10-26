@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Drawer, Form, Input, Select } from "antd";
+import { Button, Drawer, Form, Input, InputNumber, Select } from "antd";
 import type { Node } from "@xyflow/react";
 import { request } from "../../../api/request";
 import type { OctopAgent } from "../../../context/AgentContext";
@@ -85,6 +85,12 @@ export default function NodeInspectorDrawer({
               </Form.Item>
               <Form.Item name="outputVar" label="Output variable">
                 <Input />
+              </Form.Item>
+              <Form.Item name="maxRetries" label="Max retries">
+                <InputNumber min={0} max={5} precision={0} placeholder="0" style={{ width: "100%" }} />
+              </Form.Item>
+              <Form.Item name="retryDelay" label="Retry delay (seconds)">
+                <InputNumber min={0} max={30} step={0.5} placeholder="1" style={{ width: "100%" }} />
               </Form.Item>
             </>
           )}

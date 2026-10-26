@@ -33,6 +33,8 @@ export interface FlowNodeConfig {
   agentId?: string;
   prompt?: string;
   outputVar?: string;
+  maxRetries?: number;
+  retryDelay?: number;
   left?: string;
   op?: "eq" | "neq" | "gt" | "lt" | "gte" | "lte" | "contains";
   right?: string;
