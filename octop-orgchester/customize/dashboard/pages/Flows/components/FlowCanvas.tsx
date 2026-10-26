@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
-import { Button, Dropdown, Input, Spin, Tag, type MenuProps } from "antd";
-import { History, Play, Plus, Save as SaveIcon } from "lucide-react";
+import { Alert, Button, Dropdown, Input, Spin, Tag, type MenuProps } from "antd";
+import { CheckCircle2, History, Play, Plus, Save as SaveIcon } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -47,6 +47,16 @@ export interface FlowNodeData {
 }
 
 export type FlowNodeType = "trigger" | "agent" | "condition" | "end";
+
+/** One finding from `POST /flows/:flowId/validate`. */
+export interface FlowIssue {
+  level: "error" | "warning";
+  code: string;
+  message: string;
+  node_id: string | null;
+}
+
+const ISSUE_COLORS = { error: "#ef4444", warning: "#f59e0b" } as const;
 
 /** Shape of `GET /flows/:flowId` (per backend/routers/flow.py). */
 interface FlowDetail {
@@ -174,6 +184,23 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
   // toolbar's History button). `null` keeps the drawer closed.
   const [drawerMode, setDrawerMode] = useState<"run" | "history" | null>(null);
   const [inspectorNode, setInspectorNode] = useState<Node | null>(null);
+  const [issues, setIssues] = useState<FlowIssue[]>([]);
+
+  // Display-only copy of `nodes` with an outline on nodes that have issues.
+  // `nodes` itself stays unstyled so Save never persists the outline.
+  const displayNodes = useMemo(() => {
+    const byNode = new Map<string, "error" | "warning">();
+    for (const i of issues) {
+      if (!i.node_id) continue;
+      if (i.level === "error" || !byNode.has(i.node_id)) byNode.set(i.node_id, i.level);
+    }
+    if (byNode.size === 0) return nodes;
+    return nodes.map((n) => {
+      const level = byNode.get(n.id);
+      if (!level) return n;
+      return { ...n, style: { ...n.style, outline: `2px solid ${ISSUE_COLORS[level]}`, borderRadius: 12 } };
+    });
+  }, [nodes, issues]);
 
   useEffect(() => {
     let active = true;
@@ -243,7 +270,31 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
 
   /** Saves nodes/edges. Returns whether it succeeded, so callers that must
    * not proceed on failure (e.g. `handleRun`) can bail out. */
-  const handleSave = async (): Promise<boolean> => {
+  /** POSTs the current canvas to the validator and shows the result. Returns
+   * the issues, or `null` when the request fails (callers fail open — the
+   * server still gates activate/run). */
+  const runValidation = async (): Promise<FlowIssue[] | null> => {
+    try {
+      const res = await request<{ valid: boolean; issues?: FlowIssue[] }>(
+        `/flows/${flowId}/validate`,
+        { method: "POST", body: JSON.stringify({ nodes, edges }) },
+      );
+      const found = res?.issues ?? [];
+      setIssues(found);
+      return found;
+    } catch {
+      return null;
+    }
+  };
+
+  const hasErrors = (found: FlowIssue[] | null) => !!found && found.some((i) => i.level === "error");
+
+  const handleValidate = async () => {
+    const found = await runValidation();
+    if (found === null) message.error("Could not validate flow");
+  };
+
+  const handleSave = async (validateAfter = true): Promise<boolean> => {
     setSaving(true);
     try {
       await request(`/flows/${flowId}`, {
@@ -251,6 +302,7 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         body: JSON.stringify({ nodes, edges }),
       });
       message.success("Flow saved");
+      if (validateAfter) await runValidation(); // advisory only: never blocks Save
       return true;
     } catch (err) {
       message.error(err instanceof Error ? err.message : "Failed to save flow");
@@ -266,8 +318,11 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
   // save succeeds. On failure, handleSave already showed the error; don't
   // open the drawer on top of it.
   const handleRun = async () => {
-    const saved = await handleSave();
-    if (saved) setDrawerMode("run");
+    const saved = await handleSave(false); // Run validates once itself, below
+    if (!saved) return;
+    const found = await runValidation();
+    if (hasErrors(found)) return;
+    setDrawerMode("run");
   };
 
   // I2 fix: browsing run history must never trigger a new real run — this
@@ -298,6 +353,10 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
 
   const handleToggleStatus = async () => {
     const next = flowStatus === "active" ? "draft" : "active";
+    if (next === "active") {
+      const found = await runValidation();
+      if (hasErrors(found)) return;
+    }
     try {
       await request(`/flows/${flowId}`, {
         method: "PATCH",
@@ -341,6 +400,9 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         <Button icon={<SaveIcon size={14} />} loading={saving} onClick={() => void handleSave()}>
           Save
         </Button>
+        <Button icon={<CheckCircle2 size={14} />} onClick={() => void handleValidate()}>
+          Validate
+        </Button>
         <Button
           icon={<Play size={14} />}
           aria-pressed={drawerMode === "run"}
@@ -363,9 +425,36 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
           {flowStatus === "active" ? "Deactivate" : "Activate"}
         </Button>
       </div>
+      {issues.length > 0 && (
+        <Alert
+          style={{ margin: "0 8px 8px" }}
+          type={issues.some((i) => i.level === "error") ? "error" : "warning"}
+          showIcon
+          message={`${issues.filter((i) => i.level === "error").length} error(s), ${
+            issues.filter((i) => i.level === "warning").length
+          } warning(s)`}
+          description={
+            <ul style={{ margin: 0, paddingLeft: 16 }}>
+              {issues.map((i, idx) => (
+                <li
+                  key={`${i.code}-${i.node_id ?? ""}-${idx}`}
+                  data-level={i.level}
+                  style={{ cursor: i.node_id ? "pointer" : "default", color: ISSUE_COLORS[i.level] }}
+                  onClick={() => {
+                    const target = i.node_id ? nodes.find((n) => n.id === i.node_id) : undefined;
+                    if (target) setInspectorNode(target);
+                  }}
+                >
+                  {i.message}
+                </li>
+              ))}
+            </ul>
+          }
+        />
+      )}
       <div style={{ flex: 1, minHeight: 480 }}>
         <ReactFlow
-          nodes={nodes}
+          nodes={displayNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
