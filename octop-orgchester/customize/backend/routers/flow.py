@@ -24,7 +24,13 @@ from pydantic import BaseModel
 from octop.api.common.agent import assert_agent_owner
 from octop.api.deps import current_user, get_server
 from octop.infra.errors import ErrorCode, OctopError
-from octop.infra.flows.engine import FlowEdge, FlowNode, StepResult, run_flow
+from octop.infra.flows.engine import (
+    FlowEdge,
+    FlowNode,
+    NonRetryableError,
+    StepResult,
+    run_flow,
+)
 from octop.infra.utils.ulid import new_short_id
 
 router = APIRouter()
@@ -118,6 +124,11 @@ def _coerce_node_config(raw: Any) -> dict[str, Any]:
         config["agent_id"] = config.pop("agentId")
     if "outputVar" in config:
         config["output_var"] = config.pop("outputVar")
+    # Retry knobs: renamed only; the engine validates/clamps the values.
+    if "maxRetries" in config:
+        config["max_retries"] = config.pop("maxRetries")
+    if "retryDelay" in config:
+        config["retry_delay"] = config.pop("retryDelay")
     for key in ("prompt", "left", "right", "op"):
         value = config.get(key)
         if value is not None and not isinstance(value, str):
@@ -346,10 +357,14 @@ async def run_flow_endpoint(
         from octop_harness.teams.util import build_one_shot_request
 
         assert server.app_runtime is not None
-        agent_row = server.app_runtime.agent_registry.get_row(agent_id)
-        if agent_row is None:
-            raise OctopError(ErrorCode.NOT_FOUND, f"agent {agent_id!r} not found")
-        assert_agent_owner(agent_row, user)
+        # Missing / not-owned agent never heals on retry: fail the step at once.
+        try:
+            agent_row = server.app_runtime.agent_registry.get_row(agent_id)
+            if agent_row is None:
+                raise OctopError(ErrorCode.NOT_FOUND, f"agent {agent_id!r} not found")
+            assert_agent_owner(agent_row, user)
+        except OctopError as exc:
+            raise NonRetryableError(str(exc)) from exc
         req = build_one_shot_request(
             user_id=user.id, agent_id=agent_id, text=prompt, source="flow"
         )

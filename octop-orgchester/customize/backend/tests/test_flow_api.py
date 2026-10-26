@@ -186,6 +186,76 @@ async def test_run_flow_with_unowned_agent_fails_step_not_500(env):
     assert r.json()["status"] == "failed"
 
 
+async def test_run_retries_flaky_agent_from_xyflow_config(env, monkeypatch):
+    from tests.support.fakes import FakeHarnessAgent
+
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "flaky"})).json()["agent_id"]
+    flow_id = (await c.post("/api/flows", headers=auth, json={"name": "Retry"})).json()["flow_id"]
+    calls = {"n": 0}
+
+    async def _flaky_call(self: FakeHarnessAgent, request: dict) -> dict:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient")
+        return {"messages": [{"role": "assistant", "content": "fake reply"}]}
+
+    monkeypatch.setattr(FakeHarnessAgent, "call", _flaky_call, raising=False)
+    nodes = [
+        {"id": "t", "type": "trigger", "position": {"x": 0, "y": 0}, "data": {"config": {}}},
+        {
+            "id": "a",
+            "type": "agent",
+            "position": {"x": 0, "y": 100},
+            "data": {
+                "config": {"agentId": agent_id, "prompt": "hi", "maxRetries": 2, "retryDelay": 0}
+            },
+        },
+    ]
+    edges = [{"id": "e1", "source": "t", "target": "a"}]
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": nodes, "edges": edges, "status": "active"},
+    )
+    r = await c.post(f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "succeeded", r.json()
+    assert calls["n"] == 2
+
+
+async def test_run_unowned_agent_is_not_retried(env):
+    import time
+
+    c, _, auth = env
+    my_agent_id = (await c.post("/api/agents", headers=auth, json={"name": "mine"})).json()["agent_id"]
+    other_auth = await create_user(c, auth, username="flowowner3")
+    flow_id = (await c.post("/api/flows", headers=other_auth, json={"name": "F3"})).json()["flow_id"]
+    nodes = [
+        {"id": "t", "type": "trigger", "config": {}},
+        {
+            "id": "a",
+            "type": "agent",
+            "config": {"agent_id": my_agent_id, "prompt": "hi", "max_retries": 3, "retry_delay": 30},
+        },
+    ]
+    edges = [{"id": "e1", "source": "t", "target": "a"}]
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=other_auth,
+        json={"nodes": nodes, "edges": edges, "status": "active"},
+    )
+    start = time.monotonic()
+    r = await c.post(f"/api/flows/{flow_id}/run", headers=other_auth, json={"input": {}})
+    # A retried run would sleep 3 x 30s; a non-retryable failure returns at once.
+    assert time.monotonic() - start < 10
+    body = r.json()
+    assert body["status"] == "failed"
+    step = next(s for s in body["steps"] if s["node_id"] == "a")
+    assert step["error"].startswith("agent call failed: ")
+    assert "attempts" not in step["error"]
+
+
 async def test_run_persisted_xyflow_shaped_graph_with_condition_branching(
     env, _patch_fake_agent_call
 ):

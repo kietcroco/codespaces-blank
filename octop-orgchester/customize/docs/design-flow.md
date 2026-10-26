@@ -229,6 +229,18 @@ mỗi node hiện tại:
    Anti-goals) vì V1 không có loop node nên MỌI vòng lặp trong đồ thị
    là lỗi cấu hình, không phải chủ đích.
 
+**Retry (node `agent`).** `config.max_retries` (lưu ở JSON là
+`maxRetries`): số lần gọi lại thêm sau lần đầu, mặc định `0`, kẹp
+`0..5`. `config.retry_delay` (`retryDelay`): số giây chờ cố định giữa
+các lần, mặc định `1.0`, kẹp `0..30`. Vắng/`None`/`""` ⇒ mặc định;
+chuỗi số được chấp nhận; giá trị không phải số (hoặc bool) ⇒ step fail
+với `invalid retry config: ...`, không gọi agent. Mọi `Exception` của
+`call_agent` đều được thử lại, trừ `NonRetryableError` (agent không tồn
+tại / không thuộc user — router bọc `OctopError` thành lỗi này) ⇒ step
+fail ngay, không chờ. Lần thử lại KHÔNG tính vào `max_steps` (một step
+= một lần thăm node). Lỗi: `agent call failed: <exc>` (không retry /
+không-thử-lại-được) hoặc `agent call failed after <N> attempts: <exc>`.
+
 ## 9. Frontend
 
 - `customize/dashboard/pages/Flows/index.tsx`: danh sách flow (antd
