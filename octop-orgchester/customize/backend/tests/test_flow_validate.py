@@ -146,3 +146,52 @@ def test_errors_sorted_before_warnings():
     levels = [i.level for i in issues]
     assert "warning" in levels and "error" in levels
     assert levels == sorted(levels, key=lambda lv: lv != "error")
+
+
+def test_bad_template_in_agent_prompt():
+    nodes, edges = valid_graph()
+    nodes[1].config["prompt"] = "{{x|nope}}"
+    found = by_code(validate_graph(nodes, edges), "bad_template")
+    assert len(found) == 1
+    assert found[0].level == "error"
+    assert found[0].node_id == nodes[1].id
+    assert found[0].message == (
+        f"Node '{nodes[1].id}' has a bad template in prompt: "
+        "unknown filter 'nope' in {{x|nope}}"
+    )
+
+
+def test_bad_template_in_condition_left_and_right():
+    nodes = [n("t", "trigger"), n("c", "condition", left="{{a|truncate:abc}}", op="eq", right="{{b|zzz}}")]
+    found = by_code(validate_graph(nodes, [e("t", "c")]), "bad_template")
+    assert len(found) == 2
+    assert "in left:" in found[0].message and "in right:" in found[1].message
+    assert all(i.node_id == "c" for i in found)
+
+
+def test_bad_template_two_tokens_in_one_field_give_two_issues():
+    nodes = [n("t", "trigger"), n("a", "agent", agent_id="x", prompt="{{a|q}} {{b|r}}")]
+    found = by_code(validate_graph(nodes, [e("t", "a")]), "bad_template")
+    assert len(found) == 2
+
+
+def test_blank_template_fields_do_not_report_bad_template():
+    nodes = [n("t", "trigger"), n("a", "agent", agent_id="x", prompt=" "), n("c", "condition", left="", op="eq")]
+    issues = validate_graph(nodes, [e("t", "a"), e("a", "c")])
+    assert "bad_template" not in codes(issues)
+
+
+def test_valid_filtered_templates_have_no_bad_template():
+    nodes = [
+        n("t", "trigger"),
+        n("a", "agent", agent_id="x", prompt="{{ a | upper }} {{b|default:x|truncate:5}} {{c.d|json}}"),
+        n("c", "condition", left="{{a|length}}", op="gt", right="2"),
+    ]
+    issues = validate_graph(nodes, [e("t", "a"), e("a", "c")])
+    assert "bad_template" not in codes(issues)
+
+
+def test_bad_template_counts_as_error():
+    nodes, edges = valid_graph()
+    nodes[1].config["prompt"] = "{{x|nope}}"
+    assert has_errors(validate_graph(nodes, edges))

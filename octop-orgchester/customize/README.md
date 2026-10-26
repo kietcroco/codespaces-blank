@@ -187,3 +187,16 @@ Không có patch và không có migration mới. Copy tay các file sau:
 `flow.py` import `validate.py` và `engine.py` import/xuất `CONDITION_OPS`, nên
 ba file backend phải copy cùng nhau. Sau nâng cấp, kích hoạt hoặc chạy flow sai
 cấu hình trả 422 thay vì chạy.
+
+### Thêm bộ lọc template `{{path|filter}}` vào checkout đã cài sẵn
+
+Không có patch và không có migration mới. Copy tay các file sau:
+
+- `customize/backend/flows/template.py` → `Octop/src/octop/infra/flows/template.py` (file mới)
+- `customize/backend/flows/engine.py` → `Octop/src/octop/infra/flows/engine.py`
+- `customize/backend/flows/validate.py` → `Octop/src/octop/infra/flows/validate.py`
+- `customize/backend/tests/test_flow_template.py` → `Octop/tests/unit/` (file mới)
+- (tuỳ chọn) `test_flow_engine.py`, `test_flow_validate.py` → `Octop/tests/unit/`, `test_flow_api.py` → `Octop/tests/integration/`
+
+`engine.py` và `validate.py` import `template.py`, nên copy cùng nhau. Biến
+được gán tường minh là `None` giờ render ra chuỗi rỗng thay vì `"None"`.

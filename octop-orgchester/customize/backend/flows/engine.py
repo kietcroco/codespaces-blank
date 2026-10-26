@@ -12,14 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import math
-import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal
 
+from octop.infra.flows.template import TemplateError, render
+
 NodeType = Literal["trigger", "agent", "condition", "end"]
 StepStatus = Literal["succeeded", "failed"]
-
-_TEMPLATE_RE = re.compile(r"\{\{(\w+)\}\}")
 
 CONDITION_OPS: tuple[str, ...] = ("eq", "neq", "gt", "lt", "gte", "lte", "contains")
 
@@ -104,15 +103,6 @@ def _retry_policy(config: dict[str, Any]) -> tuple[int, float]:
         else max(0.0, min(float(delay), MAX_RETRY_DELAY))
     )
     return max_retries, retry_delay
-
-
-def _render(template: str, variables: dict[str, Any]) -> str:
-    """Replace every {{key}} in template with str(variables.get(key, ""))."""
-
-    def _sub(match: re.Match[str]) -> str:
-        return str(variables.get(match.group(1), ""))
-
-    return _TEMPLATE_RE.sub(_sub, template)
 
 
 def _evaluate_condition(op: str, left: str, right: str) -> bool:
@@ -205,33 +195,38 @@ async def run_flow(
         if node.type == "agent":
             step_input = dict(variables)
             prompt_template = node.config.get("prompt", "")
-            rendered_prompt = _render(prompt_template, variables)
             agent_id = node.config.get("agent_id")
             error_message: str | None = None
             reply = ""
+            rendered_prompt = ""
             try:
-                max_retries, retry_delay = _retry_policy(node.config)
-            except ValueError as exc:
-                error_message = str(exc)
-            else:
-                for attempt in range(1, max_retries + 2):
-                    try:
-                        reply = await call_agent(agent_id, rendered_prompt)
-                        error_message = None
-                        break
-                    except NonRetryableError as exc:
-                        error_message = f"agent call failed: {exc}"
-                        break
-                    except Exception as exc:  # noqa: BLE001 - must not crash run_flow
-                        if attempt <= max_retries:
-                            await sleep(retry_delay)
-                            continue
-                        if max_retries == 0:
+                rendered_prompt = render(prompt_template, variables)
+            except TemplateError as exc:
+                error_message = f"template error: {exc}"
+            if error_message is None:
+                try:
+                    max_retries, retry_delay = _retry_policy(node.config)
+                except ValueError as exc:
+                    error_message = str(exc)
+                else:
+                    for attempt in range(1, max_retries + 2):
+                        try:
+                            reply = await call_agent(agent_id, rendered_prompt)
+                            error_message = None
+                            break
+                        except NonRetryableError as exc:
                             error_message = f"agent call failed: {exc}"
-                        else:
-                            error_message = (
-                                f"agent call failed after {attempt} attempts: {exc}"
-                            )
+                            break
+                        except Exception as exc:  # noqa: BLE001 - must not crash run_flow
+                            if attempt <= max_retries:
+                                await sleep(retry_delay)
+                                continue
+                            if max_retries == 0:
+                                error_message = f"agent call failed: {exc}"
+                            else:
+                                error_message = (
+                                    f"agent call failed after {attempt} attempts: {exc}"
+                                )
 
             if error_message is not None:
                 steps.append(
@@ -277,12 +272,18 @@ async def run_flow(
             left_raw = node.config.get("left", "")
             right_raw = node.config.get("right", "")
             op = node.config.get("op", "")
-            left = _render(left_raw, variables)
-            right = _render(right_raw, variables)
+            error_message = None
             try:
-                branch = _evaluate_condition(op, left, right)
-            except ValueError as exc:
-                error_message = str(exc)
+                left = render(left_raw, variables)
+                right = render(right_raw, variables)
+            except TemplateError as exc:
+                error_message = f"template error: {exc}"
+            else:
+                try:
+                    branch = _evaluate_condition(op, left, right)
+                except ValueError as exc:
+                    error_message = str(exc)
+            if error_message is not None:
                 steps.append(
                     StepResult(
                         node_id=node.id,

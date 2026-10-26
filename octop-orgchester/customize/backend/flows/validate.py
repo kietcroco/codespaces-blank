@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from octop.infra.flows.engine import CONDITION_OPS, FlowEdge, FlowNode, _retry_policy
+from octop.infra.flows.template import check as check_template
 
 NODE_TYPES = ("trigger", "agent", "condition", "end")
 
@@ -49,6 +50,18 @@ def validate_graph(nodes: list[FlowNode], edges: list[FlowEdge]) -> list[FlowIss
     def warn(code: str, message: str, node_id: str | None) -> None:
         warnings.append(FlowIssue("warning", code, message, node_id))
 
+    def check_fields(node_id: str, config: dict[str, Any], fields: tuple[str, ...]) -> None:
+        for field in fields:
+            value = config.get(field)
+            if _blank(value):
+                continue
+            for message in check_template(str(value)):
+                err(
+                    "bad_template",
+                    f"Node '{node_id}' has a bad template in {field}: {message}",
+                    node_id,
+                )
+
     ids: set[str] = set()
     triggers: list[FlowNode] = []
     for node in nodes:
@@ -69,6 +82,7 @@ def validate_graph(nodes: list[FlowNode], edges: list[FlowEdge]) -> list[FlowIss
                 _retry_policy(config)
             except ValueError as exc:
                 err("agent_bad_retry", str(exc), node.id)
+            check_fields(node.id, config, ("prompt",))
         elif node.type == "condition":
             if config.get("op") not in CONDITION_OPS:
                 err(
@@ -82,6 +96,7 @@ def validate_graph(nodes: list[FlowNode], edges: list[FlowEdge]) -> list[FlowIss
                     f"Condition node '{node.id}' has an empty left value.",
                     node.id,
                 )
+            check_fields(node.id, config, ("left", "right"))
 
     if not triggers:
         err("no_trigger", "Flow has no trigger node.", None)

@@ -80,8 +80,8 @@ lấy phần lõi tối thiểu có giá trị ngay, bỏ hẳn phần hạ tầ
   trực tiếp của việc chỉ có 4 loại node. Một flow có cạnh tạo thành
   **chu trình (cycle)** vẫn phải được chặn an toàn (xem mục 8 — giới
   hạn số bước tối đa), không coi là "loop node" có chủ đích.
-- **Không template string phức tạp** (expression language) — chỉ thay
-  `{{key}}` bằng giá trị biến, không có hàm/toán tử trong template.
+- **Không expression language** — template chỉ có đường dẫn biến và
+  vài bộ lọc dựng sẵn (xem mục 8), không có toán tử hay hàm tự định nghĩa.
 
 ## 4. Anti-goals
 
@@ -216,9 +216,11 @@ và **1 hàm gọi agent được tiêm vào** (`call_agent: (agent_id, prompt)
 chạy trong lúc unit test. Thuật toán: bắt đầu từ node `trigger`, với
 mỗi node hiện tại:
 
-1. `agent`: dựng prompt bằng cách thay `{{key}}` trong
-   `config.prompt` bằng `variables[key]`, gọi `call_agent(agent_id,
-   prompt)`, lưu kết quả vào `variables[config.output_var or node.id]`.
+1. `agent`: dựng prompt bằng cách render template trong `config.prompt`
+   (xem "Template" bên dưới), gọi `call_agent(agent_id, prompt)`, lưu
+   kết quả vào `variables[config.output_var or node.id]`. Lỗi template
+   làm hỏng bước với `template error: <message>`, không gọi agent và
+   không retry.
 2. `condition`: so `variables` theo `config.left/op/right` (toán tử:
    `eq/neq/gt/lt/gte/lte/contains`; `gt/lt/gte/lte` ép kiểu số, lỗi rõ
    ràng nếu không phải số), đi tiếp theo cạnh có
@@ -247,12 +249,42 @@ là `max_retries × retry_delay` (tối đa 5 × 30s) cho mỗi node agent cộn
 thời gian gọi; reverse proxy có timeout ngắn hơn có thể cắt request
 trong khi run vẫn tiếp tục chạy ở server.
 
+**Template.** `customize/backend/flows/template.py` (module thuần, không
+I/O) dùng cho prompt của node `agent` và `left`/`right` của node
+`condition`. Cú pháp token: `{{path|filter|filter:arg}}`, khớp regex
+`\{\{\s*(\w+(?:\.\w+)*)\s*((?:\|[^{}|]*)*)\}\}`. Văn bản không khớp
+(`{{"a":1}}`, `{{ a b }}`, `{{}}`, `{{` đơn lẻ) được giữ nguyên. Khoảng
+trắng quanh path và filter bị bỏ qua (`{{ name | upper }}`).
+
+- *Path:* tách theo `.`, đi qua `variables`: dict -> tra key; list/tuple ->
+  chỉ số khi segment toàn chữ số và nằm trong khoảng; mọi trường hợp khác
+  (thiếu key, chỉ số sai, đi vào str/int/None) là "thiếu" và render ra chuỗi
+  rỗng. Giá trị khác chuỗi render bằng `str()`. **Thay đổi hành vi:** biến
+  được gán tường minh là `None` giờ render ra chuỗi rỗng (trước đây là
+  `"None"`); key thiếu vẫn render rỗng như cũ.
+- *Filter* (áp từ trái sang phải; giá trị thiếu coi là `None`): `upper`,
+  `lower`, `trim` (không nhận đối số, làm việc trên `str(value)`);
+  `default:<text>` (bắt buộc đối số, trả `<text>` khi giá trị là `None`
+  hoặc `""`); `truncate:<n>` (số nguyên 0..100000; nếu dài hơn `n` thì cắt
+  và thêm `...`); `length` (độ dài của str/list/tuple/dict, hoặc của
+  `str(value)`; `None` -> `0`); `json` (`json.dumps`, `None` -> `null`).
+  Đối số là phần sau dấu `:` đầu tiên, bỏ khoảng trắng và một cặp nháy
+  `'..'`/`".."` bao ngoài; không được chứa `|`, `{`, `}`.
+- *Lỗi:* filter lạ, thiếu đối số, đối số thừa hoặc `truncate` sai đối số
+  ném `TemplateError` (ví dụ `unknown filter 'xyz' in {{name|xyz}}`). Engine
+  biến nó thành bước thất bại `template error: <message>` (agent: không
+  gọi agent, không retry; condition: bước condition thất bại); không bao
+  giờ raise ra khỏi `run_flow`.
+- *Validate:* mã lỗi `bad_template` (xem bên dưới) bắt lỗi này trước khi chạy.
+
 **Validate (kiểm tra tĩnh).** `customize/backend/flows/validate.py` (hàm thuần,
 không FastAPI/DB, không bao giờ raise với dữ liệu hỏng) trả danh sách `FlowIssue`
 (`level`, `code`, `message`, `node_id`). Mức `error`: `duplicate_node_id`,
 `unknown_node_type`, `no_trigger`, `multiple_triggers`, `agent_missing_agent`,
 `agent_missing_prompt`, `agent_bad_retry`, `condition_bad_op`,
-`condition_missing_left`, `condition_bad_handle`, `edge_dangling`, `cycle`.
+`condition_missing_left`, `condition_bad_handle`, `edge_dangling`, `cycle`,
+`bad_template` (mỗi token sai ở `prompt`/`left`/`right` một issue, message
+`Node '<id>' has a bad template in <field>: <lỗi>`; trường trống bị bỏ qua).
 Mức `warning`: `unreachable_node`, `condition_branch_missing`,
 `multiple_outgoing`. Chốt chặn (lỗi 422, `detail` dạng
 `"flow has N validation error(s): <lỗi đầu tiên>"`): (1) `PATCH` với
@@ -319,6 +351,8 @@ sửa trực tiếp):**
 | `customize/backend/migrations/023_flow.sql` + `.pg.sql` | `Octop/src/octop/infra/db/migrations/023_flow.sql` + `.pg.sql` |
 | `customize/backend/flows/engine.py` | `Octop/src/octop/infra/flows/engine.py` |
 | `customize/backend/flows/validate.py` | `Octop/src/octop/infra/flows/validate.py` |
+| `customize/backend/flows/template.py` | `Octop/src/octop/infra/flows/template.py` |
+| `customize/backend/tests/test_flow_template.py` | `Octop/tests/unit/test_flow_template.py` |
 | `customize/backend/tests/test_flow_validate.py` | `Octop/tests/unit/test_flow_validate.py` |
 | `customize/backend/routers/flow.py` | `Octop/src/octop/api/routers/flow.py` |
 | `customize/backend/tests/test_flow_engine.py` | `Octop/tests/unit/test_flow_engine.py` |

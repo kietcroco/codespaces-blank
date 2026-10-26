@@ -916,3 +916,97 @@ async def test_patch_description_only_leaves_graph_and_status(env):
     assert after["status"] == "active"
     assert after["nodes"] == before["nodes"]
     assert after["edges"] == before["edges"]
+
+
+def _filter_nodes(agent_id: str, prompt: str) -> list[dict]:
+    return [
+        {"id": "t", "type": "trigger", "config": {}},
+        {"id": "a", "type": "agent", "config": {"agent_id": agent_id, "prompt": prompt}},
+        {"id": "e", "type": "end", "config": {}},
+    ]
+
+
+async def test_activate_rejects_unknown_filter(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "tf1"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={
+            "nodes": _filter_nodes(agent_id, "hi {{name|xyz}}"),
+            "edges": _VALID_EDGES,
+            "status": "active",
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].startswith("flow has 1 validation error(s)")
+
+
+async def test_run_with_filter_renders_prompt_to_agent(env, monkeypatch):
+    from tests.support.fakes import FakeHarnessAgent
+
+    c, _, auth = env
+    seen = []
+
+    async def _recording_call(self: FakeHarnessAgent, request: dict) -> dict:
+        seen.append(request)
+        return {"messages": [{"role": "assistant", "content": "fake reply"}]}
+
+    monkeypatch.setattr(FakeHarnessAgent, "call", _recording_call, raising=False)
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "tf2"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={
+            "nodes": _filter_nodes(agent_id, "hi {{name|upper}}"),
+            "edges": _VALID_EDGES,
+            "status": "active",
+        },
+    )
+    assert r.status_code == 200, r.text
+    r = await c.post(f"/api/flows/{flow_id}/run", headers=auth, json={"input": {"name": "bo"}})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "succeeded", r.text
+    assert len(seen) == 1
+    assert "hi BO" in str(seen[0])
+
+
+async def test_dry_run_shows_filtered_prompt(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "tf3"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={
+            "nodes": _filter_nodes(agent_id, "hi {{name|upper}}"),
+            "edges": _VALID_EDGES,
+            "status": "active",
+        },
+    )
+    r = await c.post(
+        f"/api/flows/{flow_id}/run",
+        headers=auth,
+        json={"input": {"name": "bo"}, "dry_run": True},
+    )
+    assert r.status_code == 200, r.text
+    step = next(s for s in r.json()["steps"] if s["node_id"] == "a")
+    assert step["output"]["a"].endswith("would receive: hi BO")
+
+
+async def test_dry_run_of_bad_template_is_rejected_422(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "tf4"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _filter_nodes(agent_id, "hi {{name|xyz}}"), "edges": _VALID_EDGES},
+    )
+    r = await c.post(
+        f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}, "dry_run": True}
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].startswith("flow has ")
