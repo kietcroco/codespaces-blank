@@ -58,6 +58,7 @@ cp "$HERE"/backend/tests/test_flow_engine.py "$OCTOP_DIR/tests/unit/test_flow_en
 cp "$HERE"/backend/tests/test_flow_api.py "$OCTOP_DIR/tests/integration/test_flow_api.py"
 mkdir -p "$OCTOP_DIR/dashboard/src/pages/Flows/components"
 cp "$HERE"/dashboard/pages/Flows/*.tsx "$OCTOP_DIR/dashboard/src/pages/Flows/"
+cp "$HERE"/dashboard/pages/Flows/*.ts "$OCTOP_DIR/dashboard/src/pages/Flows/"
 cp "$HERE"/dashboard/pages/Flows/components/*.tsx "$OCTOP_DIR/dashboard/src/pages/Flows/components/"
 
 patch_count=$(ls "$HERE"/docs/patches/*.patch 2>/dev/null | wc -l | tr -d ' ')

@@ -200,3 +200,7 @@ Không có patch và không có migration mới. Copy tay các file sau:
 
 `engine.py` và `validate.py` import `template.py`, nên copy cùng nhau. Biến
 được gán tường minh là `None` giờ render ra chuỗi rỗng thay vì `"None"`.
+
+### Thêm mẫu flow khởi tạo ("From template") vào checkout đã cài sẵn
+
+Không có patch và không có migration. Copy tay `customize/dashboard/pages/Flows/{flowTemplates.ts,flowTemplates.test.ts}` (file mới) và `index.tsx`, `index.test.tsx` (đã đổi) → `Octop/dashboard/src/pages/Flows/`.
