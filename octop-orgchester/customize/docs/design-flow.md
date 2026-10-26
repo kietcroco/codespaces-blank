@@ -239,7 +239,10 @@ với `invalid retry config: ...`, không gọi agent. Mọi `Exception` của
 tại / không thuộc user — router bọc `OctopError` thành lỗi này) ⇒ step
 fail ngay, không chờ. Lần thử lại KHÔNG tính vào `max_steps` (một step
 = một lần thăm node). Lỗi: `agent call failed: <exc>` (không retry /
-không-thử-lại-được) hoặc `agent call failed after <N> attempts: <exc>`.
+không-thử-lại-được) hoặc `agent call failed after <N> attempts: <exc>`. Run chạy đồng bộ trong một request HTTP, nên trường hợp xấu nhất
+là `max_retries × retry_delay` (tối đa 5 × 30s) cho mỗi node agent cộng
+thời gian gọi; reverse proxy có timeout ngắn hơn có thể cắt request
+trong khi run vẫn tiếp tục chạy ở server.
 
 ## 9. Frontend
 

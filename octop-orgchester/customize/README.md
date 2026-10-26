@@ -157,3 +157,19 @@ từng flow và bấm nút "Activate" (toggle mới trong `FlowCanvas.tsx`) đ�
 chuyển sang `active`. Đây là hành vi đã thiết kế (toggle + thông báo
 lỗi rõ ràng xử lý được), không phải lỗi — nhưng cần báo trước cho
 người dùng, nếu không họ sẽ nghĩ bản nâng cấp làm hỏng flow của họ.
+
+### Thêm retry cho node agent (roadmap #2) vào checkout đã cài sẵn
+
+Không có patch và không có migration mới. `install.sh` không chạy lại
+được trên checkout đã cài, nên copy tay các file sau:
+
+- `customize/backend/flows/engine.py` → `Octop/src/octop/infra/flows/engine.py`
+- `customize/backend/routers/flow.py` → `Octop/src/octop/api/routers/flow.py`
+- `customize/dashboard/pages/Flows/components/{FlowCanvas.tsx,NodeInspectorDrawer.tsx,NodeInspectorDrawer.test.tsx}` → `Octop/dashboard/src/pages/Flows/components/`
+- (tuỳ chọn) `customize/backend/tests/test_flow_engine.py` → `Octop/tests/unit/`, `customize/backend/tests/test_flow_api.py` → `Octop/tests/integration/`
+
+**`engine.py` và `flow.py` bắt buộc phải copy cùng nhau.** `flow.py` mới
+import `NonRetryableError` từ `engine.py`; chỉ copy `flow.py` thì server
+báo `ImportError` ngay lúc khởi động.
+
+Cài mới (fresh install) không cần làm gì thêm.
