@@ -579,7 +579,7 @@ trong phiên chat 2026-10-25 (không lưu thành file riêng trong repo).
 Top ưu tiên cho roadmap, dự kiến mỗi mục làm ở 1 phase/phiên chat mới:
 
 1. ~~Gắn cột `flows.status` vào logic `/run`~~ — **xong, xem §9.1b.**
-2. Retry cho node `agent` khi gọi lỗi tạm thời.
+2. ~~Retry cho node `agent` khi gọi lỗi tạm thời~~ — **xong (2026-10-26, merge vào `main`; chưa cài vào `Octop/`)**. Config node `max_retries` (0–5, mặc định 0) + `retry_delay` (0–30s, mặc định 1s); lỗi agent không tồn tại/không thuộc user không retry. Không patch/migration mới. Plan: `customize/docs/superpowers/plans/2026-10-26-flow-agent-retry.md`; hướng dẫn nâng cấp: `customize/README.md`. Việc để dành cho #3: node agent chưa chọn agent (`agent_id=None`) hiện có thể bị retry vô ích — validate tĩnh nên chặn.
 3. Validate tĩnh trước khi lưu (thiếu node bắt đầu, field trống...).
 4. Dry-run mode — rẻ vì `call_agent` đã dependency-injected sẵn trong
    `engine.py`.
