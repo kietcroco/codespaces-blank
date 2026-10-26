@@ -1,0 +1,37 @@
+diff --git a/dashboard/src/layouts/sidebarNav.tsx b/dashboard/src/layouts/sidebarNav.tsx
+index 7f37f911..64fcb04c 100644
+--- a/dashboard/src/layouts/sidebarNav.tsx
++++ b/dashboard/src/layouts/sidebarNav.tsx
+@@ -19,6 +19,7 @@ import {
+   GraduationCap,
+   Shield,
+   PanelsTopLeft,
++  Building2,
+ } from "lucide-react";
+ import type { OctopUser } from "../api/modules/auth";
+ import { navAllowed, userCan } from "../utils/permissions";
+@@ -67,6 +68,7 @@ export interface NavSection {
+ export const SIDEBAR_NAV_KEYS = [
+   "chat",
+   "experts",
++  "agency",
+   "tasks",
+   "token-usage",
+   "personalization",
+@@ -167,6 +169,16 @@ export function buildNavSections(
+       labelKey: "nav.experts",
+     });
+   }
++  // Agency manages Experts, so it's gated behind the same "experts"
++  // permission as the Experts item itself — no new NAV_PERMISSIONS entry.
++  if (navAllowed(user, "experts")) {
++    topItems.push({
++      key: "agency",
++      path: "/agency",
++      icon: <Building2 size={iconSize} strokeWidth={iconStroke} />,
++      labelKey: "nav.agency",
++    });
++  }
+   if (navAllowed(user, "tasks")) {
+     topItems.push({
+       key: "tasks",

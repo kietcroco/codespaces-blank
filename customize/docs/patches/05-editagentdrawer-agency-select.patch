@@ -1,0 +1,120 @@
+diff --git a/dashboard/src/pages/Experts/components/EditAgentDrawer.tsx b/dashboard/src/pages/Experts/components/EditAgentDrawer.tsx
+index 657287ab..991ad3a8 100644
+--- a/dashboard/src/pages/Experts/components/EditAgentDrawer.tsx
++++ b/dashboard/src/pages/Experts/components/EditAgentDrawer.tsx
+@@ -85,6 +85,8 @@ import AgentBackendFields from "./AgentBackendFields";
+ import ExpertComposerDefaultsFields from "./ExpertComposerDefaultsFields";
+ import SkillCatalogDrawer from "./SkillCatalogDrawer";
+ import SubagentCatalogDrawer from "./SubagentCatalogDrawer";
++import type { AgencyRow } from "../../Agency/components/AgencyFormModal";
++import type { AgencyOrgChartAgency } from "../../Agency/components/AgencyOrgChart";
+ import styles from "../index.module.less";
+ 
+ interface AgentDetail {
+@@ -139,6 +141,7 @@ interface EditFormValues {
+   welcome_message?: string;
+   is_shared?: boolean;
+   default_model: string;
++  agency_id?: string | null;
+   conversation_mode: ConversationMode;
+   backend_choice: string;
+   composite_default: string;
+@@ -242,6 +245,7 @@ function EditAgentDrawerBody({
+     useAgentFormResources(true, agent.agent_id);
+   const [pathMappings, setPathMappings] = useState<PathMapping[]>([]);
+   const [agentConfig, setAgentConfig] = useState<Record<string, unknown>>({});
++  const [agencies, setAgencies] = useState<AgencyRow[]>([]);
+   const [colorPalette, setColorPalette] = useState<string>(
+     () => parseStoredColor(agent.color) ?? DEFAULT_PALETTE,
+   );
+@@ -391,6 +395,43 @@ function EditAgentDrawerBody({
+     };
+   }, [agent.agent_id, agent.state, form, message, t]);
+ 
++  useEffect(() => {
++    let cancelled = false;
++    request<AgencyRow[]>("/agencies")
++      .then((rows) => {
++        if (!cancelled) setAgencies(rows);
++      })
++      .catch(() => {
++        if (!cancelled) setAgencies([]);
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, []);
++
++  useEffect(() => {
++    // There is no GET-by-expert endpoint; derive the expert's current
++    // Agency from the org-chart response instead, so the picker doesn't
++    // misreport "No agency" for an expert that already belongs to one.
++    // setFieldsValue (not user input) leaves the field untouched, so
++    // handleSave's touched-guard still only PUTs when the user acts.
++    let cancelled = false;
++    request<{ agencies: AgencyOrgChartAgency[] }>("/agencies/org-chart")
++      .then((data) => {
++        if (cancelled) return;
++        const current = data.agencies.find((a) =>
++          a.experts.some((e) => e.agent_id === agent.agent_id),
++        );
++        form.setFieldValue("agency_id", current?.agency_id);
++      })
++      .catch(() => {
++        /* leave the picker unselected — same as any other load failure */
++      });
++    return () => {
++      cancelled = true;
++    };
++  }, [agent.agent_id, form]);
++
+   const handleSave = useCallback(async () => {
+     const values = await form.validateFields();
+     if (values.backend_choice === "composite") {
+@@ -493,6 +534,26 @@ function EditAgentDrawerBody({
+         }),
+       });
+ 
++      if (form.isFieldsTouched(["agency_id"])) {
++        try {
++          await request(`/agencies/members/${agent.agent_id}`, {
++            method: "PUT",
++            body: JSON.stringify({ agency_id: values.agency_id ?? null }),
++          });
++        } catch (agencyErr) {
++          // The expert PATCH above already committed — a failed Agency
++          // assignment must not be reported as a failed save, nor skip
++          // the rest of the save flow (skill packages, onSaved, onClose).
++          message.warning(
++            apiErrorMessage(
++              agencyErr,
++              t("experts.agencyAssignFailed", "Could not assign Agency"),
++              t,
++            ),
++          );
++        }
++      }
++
+       if (!remote && !skillPackagesSupported) {
+         try {
+           await skillPackagesApi.replaceMounted(agent.agent_id, []);
+@@ -852,6 +913,19 @@ function EditAgentDrawerBody({
+                   }
+                 />
+               </Form.Item>
++              <Form.Item
++                name="agency_id"
++                label={t("experts.agencyLabel", "Agency")}
++              >
++                <Select
++                  allowClear
++                  placeholder={t("experts.agencyPlaceholder", "No agency")}
++                  options={agencies.map((a) => ({
++                    value: a.agency_id,
++                    label: a.name,
++                  }))}
++                />
++              </Form.Item>
+ 
+               <AgentBackendFields
+                 backends={backends}

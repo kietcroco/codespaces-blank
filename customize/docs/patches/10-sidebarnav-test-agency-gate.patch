@@ -1,0 +1,38 @@
+diff --git a/dashboard/src/layouts/sidebarNav.test.ts b/dashboard/src/layouts/sidebarNav.test.ts
+index b5bb4012..7a466beb 100644
+--- a/dashboard/src/layouts/sidebarNav.test.ts
++++ b/dashboard/src/layouts/sidebarNav.test.ts
+@@ -14,7 +14,33 @@ const adminUser = {
+   permissions: ["*"],
+ } as OctopUser;
+ 
++const expertsUser = {
++  id: 2,
++  username: "expert-manager",
++  role: "user",
++  permissions: ["experts"],
++} as OctopUser;
++
++const noExpertsUser = {
++  id: 3,
++  username: "no-experts",
++  role: "user",
++  permissions: [],
++} as OctopUser;
++
+ describe("sidebarNav", () => {
++  it("gates the agency item behind the experts permission, like the experts item itself", () => {
++    const flatKeys = (user: OctopUser) =>
++      new Set(
++        buildNavSections(user, { mobileEnabled: true }).flatMap((s) =>
++          s.items.map((i) => i.key),
++        ),
++      );
++    expect(flatKeys(expertsUser).has("agency")).toBe(true);
++    expect(flatKeys(noExpertsUser).has("agency")).toBe(false);
++    expect(flatKeys(noExpertsUser).has("experts")).toBe(false);
++  });
++
+   it("marks catalog keys as grouped", () => {
+     for (const key of SIDEBAR_GROUPED_NAV_KEYS) {
+       expect(isGroupedNavKey(key)).toBe(true);

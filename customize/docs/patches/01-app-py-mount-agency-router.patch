@@ -1,0 +1,20 @@
+diff --git a/src/octop/api/app.py b/src/octop/api/app.py
+index 91d78479..5d53421a 100644
+--- a/src/octop/api/app.py
++++ b/src/octop/api/app.py
+@@ -159,6 +159,7 @@ def build_app(server: OctopServer) -> FastAPI:
+     from octop.api.routers import (
+         acp,
+         admin,
++        agency,
+         agent_files,
+         agent_mcp,
+         agent_tools,
+@@ -274,6 +275,7 @@ def build_app(server: OctopServer) -> FastAPI:
+             _RouterMount(mbti.router, "/api", ["mbti"]),
+             _RouterMount(experts.router, "/api", ["experts"]),
+             _RouterMount(teams.router, "/api", ["teams"]),
++            _RouterMount(agency.router, "/api", ["agency"]),
+             _RouterMount(workspace.router, "/api", ["workspace"]),
+             _RouterMount(agent_files.router, "/api", ["agent_files"]),
+             _RouterMount(memory.router, "/api", ["memory"]),
