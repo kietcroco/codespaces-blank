@@ -1,9 +1,12 @@
 // customize/dashboard/pages/Flows/components/FlowCanvas.test.tsx
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../../api/request", () => ({ request: vi.fn() }));
 import { request } from "../../../api/request";
+vi.mock("@/components/Markdown/LazyMarkdown", () => ({
+  default: ({ content }: { content: string }) => <div>{content}</div>,
+}));
 import FlowCanvas, { minimapNodeColor } from "./FlowCanvas";
 const api = vi.mocked(request, true);
 beforeEach(() => vi.clearAllMocks());
@@ -293,5 +296,63 @@ describe("FlowCanvas minimap", () => {
     const body = JSON.parse((patch[1] as { body: string }).body);
     expect(Object.keys(body.nodes[0]).sort()).toEqual(Object.keys(LOADED).sort());
     expect(body.nodes[0]).not.toHaveProperty("style");
+  });
+  describe("Docs drawer", () => {
+    const flow = { flow_id: "fl_1", name: "F", status: "draft", description: "# Hi", nodes: [], edges: [] };
+
+    it("opens with the loaded description", async () => {
+      api.mockResolvedValueOnce(flow);
+      render(<FlowCanvas flowId="fl_1" />);
+      await screen.findByText("Draft");
+      await userEvent.click(screen.getByRole("button", { name: "Docs" }));
+      expect((await screen.findByRole("textbox", { name: "Flow docs" })) as HTMLTextAreaElement).toHaveValue("# Hi");
+    });
+
+    it("saves with a description-only PATCH and closes", async () => {
+      api.mockResolvedValueOnce(flow);
+      api.mockResolvedValueOnce({});
+      render(<FlowCanvas flowId="fl_1" />);
+      await screen.findByText("Draft");
+      await userEvent.click(screen.getByRole("button", { name: "Docs" }));
+      await userEvent.type(await screen.findByRole("textbox", { name: "Flow docs" }), "!");
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+      expect(api).toHaveBeenNthCalledWith(2, "/flows/fl_1", {
+        method: "PATCH",
+        body: JSON.stringify({ description: "# Hi!" }),
+      });
+      await waitFor(() => expect(screen.queryByRole("textbox", { name: "Flow docs" })).toBeNull());
+    });
+
+    it("sends description null for whitespace-only text", async () => {
+      api.mockResolvedValueOnce(flow);
+      api.mockResolvedValueOnce({});
+      render(<FlowCanvas flowId="fl_1" />);
+      await screen.findByText("Draft");
+      await userEvent.click(screen.getByRole("button", { name: "Docs" }));
+      const box = await screen.findByRole("textbox", { name: "Flow docs" });
+      await userEvent.clear(box);
+      await userEvent.type(box, "  ");
+      await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+      expect(api).toHaveBeenNthCalledWith(2, "/flows/fl_1", {
+        method: "PATCH",
+        body: JSON.stringify({ description: null }),
+      });
+    });
+
+    it("keeps the Save-nodes PATCH body free of description", async () => {
+      api.mockResolvedValueOnce(flow);
+      api.mockResolvedValueOnce({});
+      api.mockResolvedValueOnce({ valid: true, issues: [] });
+      render(<FlowCanvas flowId="fl_1" />);
+      await screen.findByText("Draft");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(api).toHaveBeenCalledTimes(3));
+      expect(api).toHaveBeenNthCalledWith(2, "/flows/fl_1", {
+        method: "PATCH",
+        body: JSON.stringify({ nodes: [], edges: [] }),
+      });
+    });
   });
 });

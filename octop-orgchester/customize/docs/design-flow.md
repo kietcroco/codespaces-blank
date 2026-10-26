@@ -290,6 +290,10 @@ bản đó trả step `failed` như thường.
 - `customize/dashboard/pages/Flows/components/RunResultDrawer.tsx`:
   hiện kết quả sau khi bấm "Run" — danh sách step (icon trạng thái,
   input/output rút gọn), và tab "Lịch sử" gọi `GET .../runs`.
+- `customize/dashboard/pages/Flows/components/FlowDocsDrawer.tsx`:
+  nút "Docs" trên toolbar mở drawer soạn/xem trước (markdown qua
+  `LazyMarkdown`) tài liệu của flow, lưu bằng `PATCH` chỉ gồm
+  `description`; trang danh sách chỉ hiện bản tóm tắt 1 dòng.
 - Không thêm dependency JS mới — `@xyflow/react` đã có sẵn từ lúc làm
   `AgencyOrgChart.tsx` (patch 11, `package.json`).
 

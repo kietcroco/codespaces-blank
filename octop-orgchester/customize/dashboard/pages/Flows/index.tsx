@@ -16,6 +16,19 @@ export interface FlowRow {
   updated_at: number;
 }
 
+/** One-line plain-text preview of a markdown description for the list cards. */
+export function descriptionSummary(text: string | null | undefined, max = 140): string {
+  if (!text) return "";
+  const joined = text
+    .split("\n")
+    .map((line) => line.trim().replace(/^(?:#+|[-*>]|\d+\.)\s*/, ""))
+    .filter((line) => line.length > 0)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return joined.length > max ? `${joined.slice(0, max)}…` : joined;
+}
+
 export default function FlowsPage(): JSX.Element {
   const [flows, setFlows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,7 +136,7 @@ export default function FlowsPage(): JSX.Element {
                   </Popconfirm>,
                 ]}
               >
-                {flow.description && <p>{flow.description}</p>}
+                {descriptionSummary(flow.description) && <p>{descriptionSummary(flow.description)}</p>}
                 <p>{flow.status}</p>
               </Card>
             </Col>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
 import { Alert, Button, Dropdown, Input, Spin, Tag, type MenuProps } from "antd";
-import { CheckCircle2, FlaskConical, History, Play, Plus, Save as SaveIcon } from "lucide-react";
+import { BookText, CheckCircle2, FlaskConical, History, Play, Plus, Save as SaveIcon } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -21,6 +21,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { message } from "@/utils/antdMessage";
 import { request } from "../../../api/request";
+import FlowDocsDrawer from "./FlowDocsDrawer";
 import NodeInspectorDrawer from "./NodeInspectorDrawer";
 import RunResultDrawer from "./RunResultDrawer";
 
@@ -76,6 +77,7 @@ interface FlowDetail {
   flow_id: string;
   name: string;
   status: string;
+  description?: string | null;
   nodes: Node[];
   edges: Edge[];
 }
@@ -198,6 +200,8 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
   const [drawerMode, setDrawerMode] = useState<"run" | "dry-run" | "history" | null>(null);
   const [inspectorNode, setInspectorNode] = useState<Node | null>(null);
   const [issues, setIssues] = useState<FlowIssue[]>([]);
+  const [description, setDescription] = useState("");
+  const [docsOpen, setDocsOpen] = useState(false);
 
   // Display-only copy of `nodes` with an outline on nodes that have issues.
   // `nodes` itself stays unstyled so Save never persists the outline.
@@ -226,6 +230,7 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         setFlowName(data.name ?? "");
         setSavedName(data.name ?? "");
         setFlowStatus(data.status ?? "draft");
+        setDescription(data.description ?? "");
       } finally {
         if (active) setLoading(false);
       }
@@ -344,6 +349,18 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
   // button/save path above.
   const handleViewHistory = () => setDrawerMode("history");
 
+  // Docs save: PATCH only `description` (never nodes/edges/status); blank clears it.
+  // Rejections propagate so the drawer can keep the draft and show the error.
+  const handleDocsSave = async (next: string) => {
+    const body = next.trim() === "" ? null : next;
+    await request(`/flows/${flowId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ description: body }),
+    });
+    setDescription(body ?? "");
+    setDocsOpen(false);
+  };
+
   const handleNameBlur = async () => {
     const trimmed = flowName.trim();
     if (!trimmed) {
@@ -439,6 +456,9 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         >
           History
         </Button>
+        <Button icon={<BookText size={14} />} onClick={() => setDocsOpen(true)}>
+          Docs
+        </Button>
         <Tag color={flowStatus === "active" ? "green" : "default"}>
           {flowStatus === "active" ? "Active" : "Draft"}
         </Tag>
@@ -498,6 +518,12 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         open={inspectorNode !== null}
         onClose={() => setInspectorNode(null)}
         onSave={handleNodeConfigSave}
+      />
+      <FlowDocsDrawer
+        open={docsOpen}
+        description={description}
+        onClose={() => setDocsOpen(false)}
+        onSave={handleDocsSave}
       />
       <RunResultDrawer
         flowId={flowId}
