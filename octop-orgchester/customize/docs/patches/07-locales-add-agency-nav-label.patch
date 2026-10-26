@@ -1,0 +1,24 @@
+diff --git a/dashboard/src/locales/en.json b/dashboard/src/locales/en.json
+index f80a7e99..41cdbe55 100644
+--- a/dashboard/src/locales/en.json
++++ b/dashboard/src/locales/en.json
+@@ -229,6 +229,7 @@
+     "common": "Common",
+     "control": "Control",
+     "experts": "Experts",
++    "agency": "Agency",
+     "tasks": "Automation",
+     "connectors": "Connectors",
+     "bridge": "Cloud collab",
+diff --git a/dashboard/src/locales/zh.json b/dashboard/src/locales/zh.json
+index 623bd21f..a1bddeb8 100644
+--- a/dashboard/src/locales/zh.json
++++ b/dashboard/src/locales/zh.json
+@@ -229,6 +229,7 @@
+     "common": "常用",
+     "control": "控制",
+     "experts": "专家",
++    "agency": "部门",
+     "tasks": "自动化",
+     "connectors": "连接器",
+     "bridge": "云端协同",

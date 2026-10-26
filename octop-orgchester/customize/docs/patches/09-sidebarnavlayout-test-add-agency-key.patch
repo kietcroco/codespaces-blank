@@ -1,0 +1,12 @@
+diff --git a/dashboard/src/layouts/sidebarNavLayout.test.ts b/dashboard/src/layouts/sidebarNavLayout.test.ts
+index 21f758cb..bc9471e8 100644
+--- a/dashboard/src/layouts/sidebarNavLayout.test.ts
++++ b/dashboard/src/layouts/sidebarNavLayout.test.ts
+@@ -37,6 +37,7 @@ describe("sidebarNavLayout", () => {
+     expect(editor.ungrouped).toEqual([
+       "chat",
+       "experts",
++      "agency",
+       "tasks",
+       "token-usage",
+     ]);
