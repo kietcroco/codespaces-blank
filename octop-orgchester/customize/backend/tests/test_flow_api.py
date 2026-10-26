@@ -635,3 +635,230 @@ async def test_null_nodes_and_edges_leave_stored_graph_unchanged(env):
     assert r.status_code == 200, r.text
     assert r.json()["nodes"] == nodes
     assert r.json()["edges"] == _VALID_EDGES
+
+
+# --- Dry-run mode -----------------------------------------------------------
+
+
+def _xy_node(node_id: str, node_type: str, config: dict) -> dict:
+    return {
+        "id": node_id,
+        "type": node_type,
+        "position": {"x": 0, "y": 0},
+        "data": {"config": config},
+    }
+
+
+def _dry_run_nodes(agent_id: str, **agent_extra) -> list[dict]:
+    return [
+        _xy_node("t", "trigger", {}),
+        _xy_node(
+            "a",
+            "agent",
+            {"agentId": agent_id, "prompt": "hi {{name}}", "outputVar": "a", **agent_extra},
+        ),
+        _xy_node("e", "end", {}),
+    ]
+
+
+def _count_agent_calls(monkeypatch) -> dict:
+    from tests.support.fakes import FakeHarnessAgent
+
+    calls = {"n": 0}
+
+    async def _counting_call(self: FakeHarnessAgent, request: dict) -> dict:
+        calls["n"] += 1
+        return {"messages": [{"role": "assistant", "content": "fake reply"}]}
+
+    monkeypatch.setattr(FakeHarnessAgent, "call", _counting_call, raising=False)
+    return calls
+
+
+def _row_counts(srv) -> tuple[int, int]:
+    with srv.services.db.connect() as conn:
+        runs = conn.execute("SELECT COUNT(*) AS c FROM flow_runs").fetchone()["c"]
+        steps = conn.execute("SELECT COUNT(*) AS c FROM flow_run_steps").fetchone()["c"]
+    return runs, steps
+
+
+async def test_dry_run_returns_stub_replies_without_calling_agent(env, monkeypatch):
+    c, _, auth = env
+    calls = _count_agent_calls(monkeypatch)
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "dr"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={
+            "nodes": _dry_run_nodes(agent_id),
+            "edges": _VALID_EDGES,
+            "status": "active",
+        },
+    )
+    r = await c.post(
+        f"/api/flows/{flow_id}/run",
+        headers=auth,
+        json={"input": {"name": "x"}, "dry_run": True},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "succeeded", body
+    assert body["dry_run"] is True
+    assert body["run_id"] is None
+    step = next(s for s in body["steps"] if s["node_id"] == "a")
+    assert step["output"] == {"a": f"[dry-run] agent {agent_id} would receive: hi x"}
+    assert calls["n"] == 0
+
+
+async def test_dry_run_persists_nothing(env):
+    c, srv, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "dp"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _dry_run_nodes(agent_id), "edges": _VALID_EDGES, "status": "active"},
+    )
+    before = _row_counts(srv)
+    r = await c.post(
+        f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}, "dry_run": True}
+    )
+    assert r.status_code == 200, r.text
+    assert _row_counts(srv) == before
+    r = await c.get(f"/api/flows/{flow_id}/runs", headers=auth)
+    assert r.json() == []
+
+
+async def test_dry_run_allowed_on_draft_but_normal_run_still_rejected(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "dd"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _dry_run_nodes(agent_id), "edges": _VALID_EDGES},
+    )
+    r = await c.post(
+        f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}, "dry_run": True}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "succeeded"
+    r = await c.post(f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "FLOW_NOT_ACTIVE"
+
+
+async def test_dry_run_never_calls_or_looks_up_agents(env, monkeypatch):
+    from octop.api.routers import flow as flow_router
+
+    c, srv, auth = env
+    calls = _count_agent_calls(monkeypatch)
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={
+            "nodes": _dry_run_nodes("does-not-exist", maxRetries=3, retryDelay=5),
+            "edges": _VALID_EDGES,
+        },
+    )
+
+    def _boom(*_a, **_k):
+        raise AssertionError("agent_registry.get_row must not be called in a dry run")
+
+    monkeypatch.setattr(srv.app_runtime.agent_registry, "get_row", _boom)
+
+    sleeps = {"n": 0}
+    real_run_flow = flow_router.run_flow
+
+    async def _no_sleep(_delay):
+        sleeps["n"] += 1
+
+    async def _run_flow_spy(*args, **kwargs):
+        kwargs["sleep"] = _no_sleep
+        return await real_run_flow(*args, **kwargs)
+
+    monkeypatch.setattr(flow_router, "run_flow", _run_flow_spy)
+
+    r = await c.post(
+        f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}, "dry_run": True}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "succeeded", r.json()
+    assert sleeps["n"] == 0
+    assert calls["n"] == 0
+
+
+async def test_dry_run_of_invalid_graph_is_rejected(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _INVALID_NODES, "edges": _INVALID_EDGES},
+    )
+    r = await c.post(
+        f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}, "dry_run": True}
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].startswith("flow has ")
+
+
+async def test_dry_run_condition_branches_on_stub_reply(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "dc"})).json()["agent_id"]
+
+    def _graph(op: str, right: str):
+        nodes = [
+            _xy_node("t", "trigger", {}),
+            _xy_node("a", "agent", {"agentId": agent_id, "prompt": "hi", "outputVar": "a"}),
+            _xy_node("c", "condition", {"left": "{{a}}", "op": op, "right": right}),
+            _xy_node("yes", "end", {}),
+            _xy_node("no", "end", {}),
+        ]
+        edges = [
+            {"id": "e1", "source": "t", "target": "a"},
+            {"id": "e2", "source": "a", "target": "c"},
+            {"id": "e3", "source": "c", "target": "yes", "sourceHandle": "true"},
+            {"id": "e4", "source": "c", "target": "no", "sourceHandle": "false"},
+        ]
+        return nodes, edges
+
+    flow_id = await _new_flow(c, auth)
+    nodes, edges = _graph("contains", "[dry-run]")
+    await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"nodes": nodes, "edges": edges})
+    r = await c.post(
+        f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}, "dry_run": True}
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "succeeded", body
+    assert body["steps"][-1]["node_id"] == "yes"
+
+    nodes, edges = _graph("gt", "1")
+    await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"nodes": nodes, "edges": edges})
+    r = await c.post(
+        f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}, "dry_run": True}
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "failed", body
+    assert body["error"]
+    assert body["steps"][-1]["node_id"] == "c"
+    assert body["steps"][-1]["status"] == "failed"
+
+
+async def test_normal_run_response_has_dry_run_false(env, _patch_fake_agent_call):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "nr"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _valid_nodes(agent_id), "edges": _VALID_EDGES, "status": "active"},
+    )
+    r = await c.post(f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["dry_run"] is False
+    assert isinstance(body["run_id"], str)

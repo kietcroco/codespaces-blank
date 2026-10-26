@@ -57,6 +57,13 @@ class FlowValidateBody(BaseModel):
 
 class FlowRunBody(BaseModel):
     input: dict[str, Any] = {}
+    dry_run: bool = False
+
+
+async def _dry_run_call_agent(agent_id: str, prompt: str) -> str:
+    """Stand-in for the real agent call during a dry run: no registry lookup,
+    no model call: just echoes what the agent would have received."""
+    return f"[dry-run] agent {agent_id} would receive: {prompt}"
 
 
 def _flow_payload(row: Any) -> dict[str, Any]:
@@ -360,7 +367,7 @@ async def run_flow_endpoint(
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
     row = _require_owned_flow(server, user, flow_id)
-    if row["status"] != "active":
+    if not body.dry_run and row["status"] != "active":
         raise OctopError(
             ErrorCode.FLOW_NOT_ACTIVE, "flow must be active to run — activate it first"
         )
@@ -411,6 +418,19 @@ async def run_flow_endpoint(
         result = await server.app_runtime.agent_registry.call(agent_id, asdict(req))
         return extract_call_response(result) if isinstance(result, dict) else ""
 
+    if body.dry_run:
+        result = await run_flow(
+            nodes, edges, input=body.input, call_agent=_dry_run_call_agent
+        )
+        return {
+            "run_id": None,
+            "dry_run": True,
+            "status": result.status,
+            "output": result.output,
+            "error": result.error,
+            "steps": [_step_result_payload(step) for step in result.steps],
+        }
+
     result = await run_flow(nodes, edges, input=body.input, call_agent=call_agent)
 
     run_id = f"run_{new_short_id(6)}"
@@ -451,6 +471,7 @@ async def run_flow_endpoint(
 
     return {
         "run_id": run_id,
+        "dry_run": False,
         "status": result.status,
         "output": result.output,
         "error": result.error,

@@ -198,7 +198,7 @@ dùng cho các field JSON khác trong Octop.
 | GET | `/api/flows/{flow_id}` | lấy 1 flow (kèm `nodes`/`edges`) |
 | PATCH | `/api/flows/{flow_id}` | sửa `{name?, description?, nodes?, edges?, status?}` |
 | DELETE | `/api/flows/{flow_id}` | xoá (cascade `flow_runs`/`flow_run_steps`) |
-| POST | `/api/flows/{flow_id}/run` | chạy đồng bộ `{input?: dict}` → `FlowRunResult` (yêu cầu `status == "active"`, nếu không trả `409 FLOW_NOT_ACTIVE`) |
+| POST | `/api/flows/{flow_id}/run` | chạy đồng bộ `{input?: dict, dry_run?: bool}` → `FlowRunResult` + `run_id` (`null` khi dry-run) + `dry_run` (yêu cầu `status == "active"`, nếu không trả `409 FLOW_NOT_ACTIVE`; riêng `dry_run: true` không yêu cầu — xem §8 "Dry-run") |
 | POST | `/api/flows/{flow_id}/validate` | kiểm tra tĩnh `{nodes?, edges?}` (bỏ trống ⇒ đồ thị đã lưu) → `{valid, issues:[{level, code, message, node_id}]}`; `valid` = không có issue mức `error` |
 | GET | `/api/flows/{flow_id}/runs` | lịch sử chạy (tóm tắt) |
 | GET | `/api/flows/{flow_id}/runs/{run_id}` | 1 run đầy đủ (từng step) |
@@ -259,6 +259,16 @@ thì đồ thị đã lưu, trước khi ghi bất cứ gì; (2) `POST .../run` 
 khi gọi engine, nên flow đang `active` nhưng bị sửa thành sai không chạy được.
 Bản nháp không bao giờ bị chặn: lưu node/edge, đổi tên, và chuyển về `draft` luôn
 được phép.
+
+**Dry-run.** `POST .../run` với `dry_run: true` mô phỏng cả flow mà không gọi agent
+thật và không ghi lịch sử. Router thay `call_agent` bằng một stub trả đúng chuỗi
+`"[dry-run] agent <agent_id> would receive: <prompt>"` (prompt đã render); không
+tra `agent_registry`, không retry/sleep, không insert `flow_runs`/`flow_run_steps`
+(response có `run_id: null`, `dry_run: true`). Flow `draft` vẫn dry-run được (bỏ
+chốt `FLOW_NOT_ACTIVE`), nhưng quyền sở hữu và chốt validate tĩnh (422) vẫn áp dụng.
+Câu trả lời giả chính là giá trị mà các node phía sau (kể cả `condition`) nhìn
+thấy, nên `contains` trên `[dry-run]` rẽ nhánh được còn phép so sánh số trên văn
+bản đó trả step `failed` như thường.
 
 ## 9. Frontend
 
