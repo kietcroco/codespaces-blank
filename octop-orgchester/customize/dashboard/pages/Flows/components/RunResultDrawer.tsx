@@ -30,7 +30,7 @@ export interface FlowRunStep {
 
 /** Shape of `POST /flows/:flowId/run`'s response. */
 export interface FlowRunResult {
-  /** `null` for a dry run — nothing is persisted. */
+  /** `null` for a dry run - nothing is persisted. */
   run_id: string | null;
   dry_run?: boolean;
   status: string;
