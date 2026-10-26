@@ -49,6 +49,8 @@ cp "$HERE"/dashboard/pages/Experts/components/*.test.tsx "$OCTOP_DIR/dashboard/s
 mkdir -p "$OCTOP_DIR/src/octop/infra/flows"
 touch "$OCTOP_DIR/src/octop/infra/flows/__init__.py"
 cp "$HERE"/backend/flows/engine.py "$OCTOP_DIR/src/octop/infra/flows/"
+cp "$HERE"/backend/flows/validate.py "$OCTOP_DIR/src/octop/infra/flows/"
+cp "$HERE"/backend/tests/test_flow_validate.py "$OCTOP_DIR/tests/unit/test_flow_validate.py"
 cp "$HERE"/backend/routers/flow.py "$OCTOP_DIR/src/octop/api/routers/flow.py"
 cp "$HERE"/backend/tests/test_flow_engine.py "$OCTOP_DIR/tests/unit/test_flow_engine.py"
 cp "$HERE"/backend/tests/test_flow_api.py "$OCTOP_DIR/tests/integration/test_flow_api.py"

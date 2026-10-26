@@ -21,6 +21,8 @@ StepStatus = Literal["succeeded", "failed"]
 
 _TEMPLATE_RE = re.compile(r"\{\{(\w+)\}\}")
 
+CONDITION_OPS: tuple[str, ...] = ("eq", "neq", "gt", "lt", "gte", "lte", "contains")
+
 
 @dataclass
 class FlowNode:
