@@ -5,6 +5,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  MiniMap,
   Handle,
   Position,
   applyNodeChanges,
@@ -22,6 +23,18 @@ import { message } from "@/utils/antdMessage";
 import { request } from "../../../api/request";
 import NodeInspectorDrawer from "./NodeInspectorDrawer";
 import RunResultDrawer from "./RunResultDrawer";
+
+const MINIMAP_COLORS: Record<string, string> = {
+  trigger: "#60a5fa",
+  agent: "#a78bfa",
+  condition: "#fbbf24",
+  end: "#9ca3af",
+};
+
+/** Minimap colour for a node, derived from its `type` only (never stored on the node). */
+export function minimapNodeColor(node: Node): string {
+  return (node.type && MINIMAP_COLORS[node.type]) || "#9ca3af";
+}
 
 /**
  * One node's `data.config` per spec §9. Which fields are read depends on the
@@ -477,6 +490,7 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         >
           <Background gap={20} />
           <Controls />
+          <MiniMap pannable zoomable nodeColor={minimapNodeColor} />
         </ReactFlow>
       </div>
       <NodeInspectorDrawer

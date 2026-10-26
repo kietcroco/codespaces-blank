@@ -283,6 +283,8 @@ bản đó trả step `failed` như thường.
   Node renderer theo từng `type` (trigger/agent/condition/end) viết
   gọn trong 1 file như `AgencyOrgChart.tsx` đã làm (không tách
   `nodes/*.tsx` riêng như orchester — 4 node nhỏ, không cần).
+  Canvas có MiniMap kéo-thả (pannable) và zoom được (zoomable), màu
+  node theo `type`.
 - `customize/dashboard/pages/Flows/components/RunResultDrawer.tsx`:
   hiện kết quả sau khi bấm "Run" — danh sách step (icon trạng thái,
   input/output rút gọn), và tab "Lịch sử" gọi `GET .../runs`.

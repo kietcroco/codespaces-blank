@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../../api/request", () => ({ request: vi.fn() }));
 import { request } from "../../../api/request";
-import FlowCanvas from "./FlowCanvas";
+import FlowCanvas, { minimapNodeColor } from "./FlowCanvas";
 const api = vi.mocked(request, true);
 beforeEach(() => vi.clearAllMocks());
 
@@ -257,6 +257,41 @@ describe("FlowCanvas validation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     const patch = calls((u, i) => u === "/flows/f1" && i?.method === "PATCH")[0];
     const body = JSON.parse((patch[1] as { body: string }).body);
+    expect(body.nodes[0]).not.toHaveProperty("style");
+  });
+});
+
+describe("FlowCanvas minimap", () => {
+  const node = (type?: string) => ({ id: "n", type, position: { x: 0, y: 0 }, data: {} }) as never;
+  const LOADED = { id: "a", type: "agent", position: { x: 0, y: 0 }, data: { label: "Call agent", config: {} } };
+
+  it("minimapNodeColor maps node types to exact colours with a grey fallback", () => {
+    expect(minimapNodeColor(node("trigger"))).toBe("#60a5fa");
+    expect(minimapNodeColor(node("agent"))).toBe("#a78bfa");
+    expect(minimapNodeColor(node("condition"))).toBe("#fbbf24");
+    expect(minimapNodeColor(node("end"))).toBe("#9ca3af");
+    expect(minimapNodeColor(node(undefined))).toBe("#9ca3af");
+    expect(minimapNodeColor(node("http"))).toBe("#9ca3af");
+  });
+
+  it("renders the minimap on the canvas", async () => {
+    api.mockReset();
+    api.mockResolvedValueOnce({ flow_id: "f1", name: "F", status: "draft", nodes: [LOADED], edges: [] });
+    const { container } = render(<FlowCanvas flowId="f1" />);
+    await screen.findByText("Call agent");
+    expect(container.querySelector(".react-flow__minimap")).not.toBeNull();
+  });
+
+  it("Save sends nodes without style or colour keys beyond what was loaded", async () => {
+    api.mockReset();
+    api.mockResolvedValueOnce({ flow_id: "f1", name: "F", status: "draft", nodes: [LOADED], edges: [] });
+    api.mockResolvedValueOnce({});
+    render(<FlowCanvas flowId="f1" />);
+    await screen.findByText("Call agent");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    const patch = api.mock.calls.find(([u, i]) => u === "/flows/f1" && (i as { method?: string })?.method === "PATCH")!;
+    const body = JSON.parse((patch[1] as { body: string }).body);
+    expect(Object.keys(body.nodes[0]).sort()).toEqual(Object.keys(LOADED).sort());
     expect(body.nodes[0]).not.toHaveProperty("style");
   });
 });
