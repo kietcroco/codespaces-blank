@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { Button, Card, Col, Empty, Popconfirm, Row, Spin } from "antd";
-import { Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, Card, Col, Empty, List, Modal, Popconfirm, Row, Spin } from "antd";
+import { LayoutTemplate, Plus, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { message } from "@/utils/antdMessage";
 import { request } from "../../api/request";
 import PageShell from "../../layouts/PageShell";
+import { apiErrorMessage } from "../../utils/apiError";
+import { FLOW_TEMPLATES, type FlowTemplate } from "./flowTemplates";
 
 /** Flow row shape returned by GET/POST /flows (per backend/routers/flow.py). */
 export interface FlowRow {
@@ -34,6 +36,9 @@ export default function FlowsPage(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [usingTemplate, setUsingTemplate] = useState<string | null>(null);
+  const usingRef = useRef(false);
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -67,6 +72,36 @@ export default function FlowsPage(): JSX.Element {
     }
   };
 
+  const handleUseTemplate = async (tpl: FlowTemplate) => {
+    if (usingRef.current) return;
+    usingRef.current = true;
+    setUsingTemplate(tpl.id);
+    let created: FlowRow;
+    try {
+      created = await request<FlowRow>("/flows", {
+        method: "POST",
+        body: JSON.stringify({ name: tpl.name, description: tpl.description }),
+      });
+    } catch (err) {
+      message.error(apiErrorMessage(err, "Failed to create flow"));
+      usingRef.current = false;
+      setUsingTemplate(null);
+      return;
+    }
+    try {
+      await request(`/flows/${created.flow_id}`, {
+        method: "PATCH",
+        body: JSON.stringify(tpl.build()),
+      });
+    } catch (err) {
+      message.error(apiErrorMessage(err, "Created the flow but could not add the template nodes"));
+    }
+    usingRef.current = false;
+    setUsingTemplate(null);
+    setTemplatesOpen(false);
+    navigate(`/flows/${created.flow_id}`);
+  };
+
   // I3 fix: delete action, same Popconfirm shape as AgencyDetail.tsx's
   // "Delete this agency?" confirm — click events on the action are
   // stopped from bubbling to the Card's own onClick (which navigates).
@@ -90,14 +125,19 @@ export default function FlowsPage(): JSX.Element {
     <PageShell
       title="Flows"
       actions={
-        <Button
-          type="primary"
-          icon={<Plus size={14} />}
-          loading={creating}
-          onClick={() => void handleCreate()}
-        >
-          New Flow
-        </Button>
+        <>
+          <Button icon={<LayoutTemplate size={14} />} onClick={() => setTemplatesOpen(true)}>
+            From template
+          </Button>
+          <Button
+            type="primary"
+            icon={<Plus size={14} />}
+            loading={creating}
+            onClick={() => void handleCreate()}
+          >
+            New Flow
+          </Button>
+        </>
       }
     >
       {flows.length === 0 ? (
@@ -143,6 +183,36 @@ export default function FlowsPage(): JSX.Element {
           ))}
         </Row>
       )}
+      <Modal
+        title="New flow from template"
+        open={templatesOpen}
+        footer={null}
+        onCancel={() => {
+          if (!usingRef.current) setTemplatesOpen(false);
+        }}
+      >
+        <List
+          dataSource={FLOW_TEMPLATES}
+          renderItem={(tpl) => (
+            <List.Item
+              key={tpl.id}
+              actions={[
+                <Button
+                  key="use"
+                  type="primary"
+                  loading={usingTemplate === tpl.id}
+                  disabled={usingTemplate !== null && usingTemplate !== tpl.id}
+                  onClick={() => void handleUseTemplate(tpl)}
+                >
+                  Use
+                </Button>,
+              ]}
+            >
+              <List.Item.Meta title={tpl.name} description={tpl.summary} />
+            </List.Item>
+          )}
+        />
+      </Modal>
     </PageShell>
   );
 }

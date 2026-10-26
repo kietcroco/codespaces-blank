@@ -326,6 +326,10 @@ bản đó trả step `failed` như thường.
   nút "Docs" trên toolbar mở drawer soạn/xem trước (markdown qua
   `LazyMarkdown`) tài liệu của flow, lưu bằng `PATCH` chỉ gồm
   `description`; trang danh sách chỉ hiện bản tóm tắt 1 dòng.
+- Mẫu khởi tạo: nút "From template" trên trang danh sách mở modal với 3 mẫu
+  (`flowTemplates.ts`: ask-agent, branch-on-reply, two-step-pipeline); chọn "Use"
+  sẽ `POST /flows` (tên + mô tả markdown) rồi `PATCH` nodes/edges, các node agent
+  để trống `agentId` để người dùng tự chọn agent trước khi kích hoạt.
 - Không thêm dependency JS mới — `@xyflow/react` đã có sẵn từ lúc làm
   `AgencyOrgChart.tsx` (patch 11, `package.json`).
 
