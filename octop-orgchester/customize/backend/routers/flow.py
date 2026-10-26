@@ -128,9 +128,10 @@ def _coerce_node_config(raw: Any) -> dict[str, Any]:
        ``left``, ``op``, ``right`` are already lowercase on both sides, so
        they pass through unrenamed.
     2. Coerce ``prompt``/``left``/``right``/``op`` to ``str`` when present
-       but not already a string. ``engine.py``'s ``_render()`` calls
-       ``_TEMPLATE_RE.sub()`` on these *outside* of any try/except, so a
-       non-string value (e.g. saved JSON with a stray number) would raise
+       but not already a string (an explicit ``None`` becomes ``""``).
+       ``engine.py`` calls ``template.render`` on these *outside* of any
+       try/except for non-template errors, so a non-string value (e.g.
+       saved JSON with a stray number or null) would raise
        an unhandled ``TypeError`` and 500 the request instead of failing
        just that node's step (the deferred Task-3 finding this closes).
     """
@@ -146,8 +147,8 @@ def _coerce_node_config(raw: Any) -> dict[str, Any]:
         config["retry_delay"] = config.pop("retryDelay")
     for key in ("prompt", "left", "right", "op"):
         value = config.get(key)
-        if value is not None and not isinstance(value, str):
-            config[key] = str(value)
+        if key in config and not isinstance(value, str):
+            config[key] = "" if value is None else str(value)
     return config
 
 

@@ -388,7 +388,7 @@ async def test_run_with_non_string_config_field_fails_step_not_500(
 ):
     """A non-string ``prompt`` (e.g. stray number in saved JSON) must be
     coerced to a string by the normalizer, not reach ``engine.py``'s
-    ``_render()`` and raise an unhandled ``TypeError``."""
+    ``template.render`` and raise an unhandled ``TypeError``."""
     c, _, auth = env
     agent_id = (
         await c.post("/api/agents", headers=auth, json={"name": "bot2"})
@@ -1010,3 +1010,31 @@ async def test_dry_run_of_bad_template_is_rejected_422(env):
     )
     assert r.status_code == 422, r.text
     assert r.json()["detail"].startswith("flow has ")
+
+
+async def test_null_condition_operands_are_coerced_not_500(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    nodes = [
+        _xy_node("t", "trigger", {}),
+        _xy_node("c", "condition", {"left": "{{x}}", "op": "eq", "right": None}),
+        _xy_node("y", "end", {}),
+        _xy_node("n", "end", {}),
+    ]
+    edges = [
+        {"id": "e1", "source": "t", "target": "c"},
+        {"id": "e2", "source": "c", "target": "y", "sourceHandle": "true"},
+        {"id": "e3", "source": "c", "target": "n", "sourceHandle": "false"},
+    ]
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": nodes, "edges": edges, "status": "active"},
+    )
+    assert r.status_code == 200, r.text
+    for body in ({"input": {}}, {"input": {}, "dry_run": True}):
+        r = await c.post(f"/api/flows/{flow_id}/run", headers=auth, json=body)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "succeeded", r.json()
+        # left renders "" (missing key) and right None coerces to "": equal
+        assert r.json()["steps"][-1]["node_id"] == "y"
