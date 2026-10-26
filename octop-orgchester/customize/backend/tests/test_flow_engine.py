@@ -1,6 +1,6 @@
 # customize/backend/tests/test_flow_engine.py
 import pytest
-from octop.infra.flows.engine import FlowEdge, FlowNode, run_flow
+from octop.infra.flows.engine import FlowEdge, FlowNode, NonRetryableError, run_flow
 
 async def _echo_agent(agent_id: str, prompt: str) -> str:
     return f"reply-from-{agent_id}:{prompt}"
@@ -61,3 +61,93 @@ async def test_empty_graph_or_dangling_trigger_returns_clean_no_op_result():
     result = await run_flow(nodes, [], input={}, call_agent=_echo_agent)
     assert result.status == "succeeded"
     assert result.steps == []
+
+
+def _flaky(fail_times: int, exc=RuntimeError):
+    """call_agent that raises exc("boom") for the first fail_times calls, then returns "ok"."""
+    calls = {"n": 0}
+
+    async def call(agent_id: str, prompt: str) -> str:
+        calls["n"] += 1
+        if calls["n"] <= fail_times:
+            raise exc("boom")
+        return "ok"
+
+    call.calls = calls
+    return call
+
+def _sleeps():
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    return delays, sleep
+
+def _retry_graph(**retry_keys):
+    nodes = [
+        FlowNode(id="t", type="trigger"),
+        FlowNode(id="a", type="agent", config={"agent_id": "bot1", "prompt": "x", "output_var": "a", **retry_keys}),
+        FlowNode(id="e", type="end"),
+    ]
+    edges = [FlowEdge(id="e1", source="t", target="a"), FlowEdge(id="e2", source="a", target="e")]
+    return nodes, edges
+
+async def _run_retry(fail_times, exc=RuntimeError, **retry_keys):
+    nodes, edges = _retry_graph(**retry_keys)
+    call = _flaky(fail_times, exc)
+    delays, sleep = _sleeps()
+    result = await run_flow(nodes, edges, input={}, call_agent=call, sleep=sleep)
+    return result, call.calls["n"], delays
+
+async def test_agent_default_makes_single_call_and_old_error_text():
+    result, calls, delays = await _run_retry(5)
+    assert result.status == "failed"
+    assert result.error == "agent call failed: boom"
+    assert calls == 1
+    assert delays == []
+
+async def test_agent_retries_until_success():
+    result, calls, delays = await _run_retry(2, max_retries=3, retry_delay=0.5)
+    assert result.status == "succeeded"
+    assert result.output["a"] == "ok"
+    assert calls == 3
+    assert delays == [0.5, 0.5]
+    agent_steps = [s for s in result.steps if s.node_type == "agent"]
+    assert len(agent_steps) == 1
+    assert agent_steps[0].status == "succeeded"
+
+async def test_agent_exhausts_retries():
+    result, calls, _ = await _run_retry(9, max_retries=2)
+    assert result.status == "failed"
+    assert result.error == "agent call failed after 3 attempts: boom"
+    assert calls == 3
+    assert result.steps[-1].status == "failed"
+    assert result.steps[-1].error == result.error
+
+async def test_non_retryable_error_fails_immediately():
+    result, calls, delays = await _run_retry(9, exc=NonRetryableError, max_retries=3)
+    assert result.status == "failed"
+    assert calls == 1
+    assert delays == []
+    assert result.error == "agent call failed: boom"
+
+async def test_retry_values_are_clamped():
+    _, calls, delays = await _run_retry(99, max_retries=99, retry_delay=999)
+    assert calls == 6
+    assert delays == [30.0] * 5
+    _, calls, _ = await _run_retry(99, max_retries=-3)
+    assert calls == 1
+
+async def test_retry_config_accepts_numeric_strings_and_blank():
+    _, calls, _ = await _run_retry(9, max_retries="2", retry_delay="0")
+    assert calls == 3
+    _, calls, _ = await _run_retry(9, max_retries="", retry_delay=None)
+    assert calls == 1
+
+@pytest.mark.parametrize("key,value", [("max_retries", "abc"), ("retry_delay", "abc"), ("max_retries", True)])
+async def test_invalid_retry_config_fails_step_without_calling_agent(key, value):
+    result, calls, _ = await _run_retry(0, **{key: value})
+    assert result.status == "failed"
+    assert calls == 0
+    assert (result.error or "").startswith("invalid retry config: ")
