@@ -150,3 +150,40 @@ def test_no_crash_on_huge_inputs():
     val = "y" * 100_000
     assert _fast(lambda: render("{{a|upper|truncate:10|json}}", {"a": val})) == '"YYYYYYYYYY..."'
     assert len(_fast(lambda: render("{{a|json}}", {"a": val}))) == 100_002
+
+
+def test_huge_digit_strings_do_not_crash():
+    tpl = "{{x|truncate:" + "1" * 5000 + "}}"
+    msg = (
+        "filter 'truncate' needs an integer between 0 and 100000, got '"
+        + "1" * 5000 + "' in " + tpl
+    )
+    assert check(tpl) == [msg]
+    with pytest.raises(TemplateError) as ei:
+        render(tpl, {})
+    assert str(ei.value) == msg
+    assert render("{{i." + "1" * 5000 + "}}", {"i": [1]}) == ""
+    assert render("{{x|truncate:" + "0" * 5000 + "2}}", {"x": "abc"}) == "ab..."
+
+
+def test_json_filter_circular_values():
+    a: list = []
+    a.append(a)
+    d: dict = {}
+    d["self"] = d
+    assert render("{{a|json}}", {"a": a}) == '"[[...]]"'
+    assert render("{{a|json}}", {"a": d}) == "\"{'self': {...}}\""
+
+
+def test_truncate_missing_and_empty_arg():
+    assert check("{{x|truncate}}") == [
+        "filter 'truncate' needs an argument in {{x|truncate}}"
+    ]
+    assert check("{{x|truncate:}}") == [
+        "filter 'truncate' needs an integer between 0 and 100000, got '' in {{x|truncate:}}"
+    ]
+
+
+def test_mismatched_quotes_kept_and_tuple_index():
+    assert render("{{a|default:'x\"}}", {}) == "'x\""
+    assert render("{{t.1}}{{t.2}}", {"t": ("a", "b")}) == "b"

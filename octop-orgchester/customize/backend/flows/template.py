@@ -33,7 +33,7 @@ def _f_default(value: Any, arg: str) -> Any:
 
 def _f_truncate(value: Any, arg: str) -> str:
     text = _to_text(value)
-    n = int(arg)
+    n = int(arg.lstrip("0") or "0")
     return text[:n] + "..." if len(text) > n else text
 
 
@@ -46,8 +46,13 @@ def _f_length(value: Any, arg: str) -> str:
 def _f_json(value: Any, arg: str) -> str:
     try:
         return json.dumps(value, ensure_ascii=False, default=str)
-    except (ValueError, TypeError, RecursionError):
+    except Exception:
+        pass
+    try:
         return json.dumps(_to_text(value), ensure_ascii=False)
+    except Exception:
+        # circular or absurdly deep values: never let them escape
+        return '"<unserialisable>"'
 
 
 # name -> (needs_arg, implementation)
@@ -88,7 +93,8 @@ def _parse_filters(token: str, raw: str) -> list[tuple[str, str]]:
         if not needs_arg and sep:
             raise TemplateError(f"filter '{name}' takes no argument in {token}")
         if name == "truncate" and not (
-            arg.isascii() and arg.isdigit() and int(arg) <= _MAX_TRUNCATE
+            arg.isascii() and arg.isdigit() and len(arg.lstrip("0")) <= 6
+            and int(arg.lstrip("0") or "0") <= _MAX_TRUNCATE
         ):
             raise TemplateError(
                 "filter 'truncate' needs an integer between 0 and "
@@ -106,7 +112,11 @@ def _resolve(path: str, variables: dict[str, Any]) -> Any:
                 return None
             cur = cur[seg]
         elif isinstance(cur, (list, tuple)):
-            if not (seg.isascii() and seg.isdigit()) or int(seg) >= len(cur):
+            if (
+                not (seg.isascii() and seg.isdigit())
+                or len(seg) > 18
+                or int(seg) >= len(cur)
+            ):
                 return None
             cur = cur[int(seg)]
         else:
