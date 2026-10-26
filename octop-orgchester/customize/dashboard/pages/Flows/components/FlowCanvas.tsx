@@ -268,8 +268,6 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
     ]);
   };
 
-  /** Saves nodes/edges. Returns whether it succeeded, so callers that must
-   * not proceed on failure (e.g. `handleRun`) can bail out. */
   /** POSTs the current canvas to the validator and shows the result. Returns
    * the issues, or `null` when the request fails (callers fail open — the
    * server still gates activate/run). */
@@ -294,6 +292,8 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
     if (found === null) message.error("Could not validate flow");
   };
 
+  /** Saves nodes/edges. Returns whether it succeeded, so callers that must
+   * not proceed on failure (e.g. `handleRun`) can bail out. */
   const handleSave = async (validateAfter = true): Promise<boolean> => {
     setSaving(true);
     try {
