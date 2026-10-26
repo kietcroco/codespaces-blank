@@ -173,3 +173,17 @@ import `NonRetryableError` từ `engine.py`; chỉ copy `flow.py` thì server
 báo `ImportError` ngay lúc khởi động.
 
 Cài mới (fresh install) không cần làm gì thêm.
+
+### Thêm validate tĩnh trước khi lưu (roadmap #3) vào checkout đã cài sẵn
+
+Không có patch và không có migration mới. Copy tay các file sau:
+
+- `customize/backend/flows/validate.py` → `Octop/src/octop/infra/flows/validate.py` (file mới)
+- `customize/backend/flows/engine.py` → `Octop/src/octop/infra/flows/engine.py`
+- `customize/backend/routers/flow.py` → `Octop/src/octop/api/routers/flow.py`
+- `customize/dashboard/pages/Flows/` (các file Flows đã đổi, gồm `components/FlowCanvas.tsx` và test) → `Octop/dashboard/src/pages/Flows/`
+- (tuỳ chọn) `customize/backend/tests/test_flow_validate.py` → `Octop/tests/unit/`, `test_flow_engine.py` → `Octop/tests/unit/`, `test_flow_api.py` → `Octop/tests/integration/`
+
+`flow.py` import `validate.py` và `engine.py` import/xuất `CONDITION_OPS`, nên
+ba file backend phải copy cùng nhau. Sau nâng cấp, kích hoạt hoặc chạy flow sai
+cấu hình trả 422 thay vì chạy.

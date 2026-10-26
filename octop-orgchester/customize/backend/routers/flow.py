@@ -31,6 +31,7 @@ from octop.infra.flows.engine import (
     StepResult,
     run_flow,
 )
+from octop.infra.flows.validate import FlowIssue, has_errors, validate_graph
 from octop.infra.utils.ulid import new_short_id
 
 router = APIRouter()
@@ -47,6 +48,11 @@ class FlowPatchBody(BaseModel):
     nodes: list[dict[str, Any]] | None = None
     edges: list[dict[str, Any]] | None = None
     status: str | None = None
+
+
+class FlowValidateBody(BaseModel):
+    nodes: list[dict[str, Any]] | None = None
+    edges: list[dict[str, Any]] | None = None
 
 
 class FlowRunBody(BaseModel):
@@ -196,6 +202,14 @@ def _to_engine_graph(
     )
 
 
+def _validation_error(issues: list[FlowIssue]) -> HTTPException:
+    errors = [i for i in issues if i.level == "error"]
+    return HTTPException(
+        status_code=422,
+        detail=f"flow has {len(errors)} validation error(s): {errors[0].message}",
+    )
+
+
 def _require_owned_flow(server: Any, user: Any, flow_id: str) -> Any:
     """Load a flow row, raising NOT_FOUND / FORBIDDEN like ``_require_owned_agency``."""
     with server.services.db.connect() as conn:
@@ -265,7 +279,18 @@ async def patch_flow(
     user: Any = Depends(current_user),
     server: Any = Depends(get_server),
 ) -> dict[str, Any]:
-    _require_owned_flow(server, user, flow_id)
+    row = _require_owned_flow(server, user, flow_id)
+    if body.status == "active":
+        # Gate only the transition to active; validate before writing anything.
+        raw_nodes = body.nodes if "nodes" in body.model_fields_set else None
+        raw_edges = body.edges if "edges" in body.model_fields_set else None
+        if raw_nodes is None:
+            raw_nodes = json.loads(row["nodes_json"])
+        if raw_edges is None:
+            raw_edges = json.loads(row["edges_json"])
+        issues = validate_graph(*_to_engine_graph(raw_nodes, raw_edges))
+        if has_errors(issues):
+            raise _validation_error(issues)
     updates: dict[str, Any] = {}
     if body.name is not None:
         updates["name"] = body.name.strip()
@@ -315,6 +340,20 @@ async def delete_flow(
         conn.execute("DELETE FROM flows WHERE flow_id = ?", (flow_id,))
 
 
+@router.post("/flows/{flow_id}/validate", summary="Statically validate a flow graph")
+async def validate_flow(
+    flow_id: str,
+    body: FlowValidateBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    row = _require_owned_flow(server, user, flow_id)
+    raw_nodes = body.nodes if body.nodes is not None else json.loads(row["nodes_json"])
+    raw_edges = body.edges if body.edges is not None else json.loads(row["edges_json"])
+    issues = validate_graph(*_to_engine_graph(raw_nodes, raw_edges))
+    return {"valid": not has_errors(issues), "issues": [i.to_dict() for i in issues]}
+
+
 @router.post("/flows/{flow_id}/run", summary="Run a flow synchronously")
 async def run_flow_endpoint(
     flow_id: str,
@@ -330,6 +369,9 @@ async def run_flow_endpoint(
     nodes, edges = _to_engine_graph(
         json.loads(row["nodes_json"]), json.loads(row["edges_json"])
     )
+    issues = validate_graph(nodes, edges)
+    if has_errors(issues):
+        raise _validation_error(issues)
 
     async def call_agent(agent_id: str, prompt: str) -> str:
         # Production-correct path: ``AgentManager.call`` (this module's

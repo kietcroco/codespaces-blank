@@ -367,10 +367,17 @@ async def test_run_with_malformed_node_is_clean_422_not_500(env):
         await c.post("/api/flows", headers=auth, json={"name": "Malformed"})
     ).json()["flow_id"]
     bad_nodes = [{"type": "trigger", "position": {"x": 0, "y": 0}, "data": {"config": {}}}]
-    await c.patch(
+    # Activation is now gated, so activate a valid graph first, then save the
+    # malformed one (saving is never blocked) and run.
+    good = [{"id": "t", "type": "trigger", "config": {}}]
+    r = await c.patch(
         f"/api/flows/{flow_id}",
         headers=auth,
-        json={"nodes": bad_nodes, "edges": [], "status": "active"},
+        json={"nodes": good, "edges": [], "status": "active"},
+    )
+    assert r.status_code == 200, r.text
+    await c.patch(
+        f"/api/flows/{flow_id}", headers=auth, json={"nodes": bad_nodes, "edges": []}
     )
     r = await c.post(f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}})
     assert r.status_code == 422, r.text
@@ -423,3 +430,178 @@ async def test_cannot_access_another_users_flow(env):
     other_auth = await create_user(c, auth, username="flowintruder")
     r = await c.get(f"/api/flows/{flow_id}", headers=other_auth)
     assert r.status_code in (403, 404)
+
+
+# --- Static validation: endpoint + activate/run gates -----------------------
+
+_VALID_EDGES = [
+    {"id": "e1", "source": "t", "target": "a"},
+    {"id": "e2", "source": "a", "target": "e"},
+]
+
+
+def _valid_nodes(agent_id: str) -> list[dict]:
+    return [
+        {"id": "t", "type": "trigger", "config": {}},
+        {"id": "a", "type": "agent", "config": {"agent_id": agent_id, "prompt": "hi"}},
+        {"id": "e", "type": "end", "config": {}},
+    ]
+
+
+_INVALID_NODES = [
+    {"id": "t", "type": "trigger", "config": {}},
+    {"id": "a", "type": "agent", "config": {}},
+]
+_INVALID_EDGES = [{"id": "e1", "source": "t", "target": "a"}]
+
+
+async def _new_flow(c, auth, name="V"):
+    return (await c.post("/api/flows", headers=auth, json={"name": name})).json()["flow_id"]
+
+
+async def test_validate_endpoint_reports_issues_for_stored_graph(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _INVALID_NODES, "edges": _INVALID_EDGES},
+    )
+    r = await c.post(f"/api/flows/{flow_id}/validate", headers=auth, json={})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["valid"] is False
+    assert "agent_missing_agent" in [i["code"] for i in body["issues"]]
+    assert set(body["issues"][0]) == {"level", "code", "message", "node_id"}
+
+
+async def test_validate_endpoint_uses_body_graph_when_given(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "vb"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _INVALID_NODES, "edges": _INVALID_EDGES},
+    )
+    r = await c.post(
+        f"/api/flows/{flow_id}/validate",
+        headers=auth,
+        json={"nodes": _valid_nodes(agent_id), "edges": _VALID_EDGES},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["valid"] is True
+
+
+async def test_validate_unowned_flow_is_forbidden(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    other_auth = await create_user(c, auth, username="validateintruder")
+    r = await c.post(f"/api/flows/{flow_id}/validate", headers=other_auth, json={})
+    assert r.status_code in (403, 404)
+
+
+async def test_activate_empty_flow_is_rejected(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    r = await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"status": "active"})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].startswith("flow has 1 validation error(s)")
+    r = await c.get(f"/api/flows/{flow_id}", headers=auth)
+    assert r.json()["status"] == "draft"
+
+
+async def test_activate_valid_flow_succeeds(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "av"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _valid_nodes(agent_id), "edges": _VALID_EDGES},
+    )
+    r = await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"status": "active"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "active"
+
+
+async def test_activate_uses_nodes_sent_in_same_patch(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "as"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _valid_nodes(agent_id), "edges": _VALID_EDGES, "status": "active"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "active"
+
+
+async def test_patch_nodes_and_name_not_blocked_when_invalid(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _INVALID_NODES, "edges": _INVALID_EDGES},
+    )
+    assert r.status_code == 200, r.text
+    r = await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"name": "Renamed"})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Renamed"
+
+
+async def test_deactivate_never_blocked(env):
+    c, _, auth = env
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "dv"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _valid_nodes(agent_id), "edges": _VALID_EDGES, "status": "active"},
+    )
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _INVALID_NODES, "edges": _INVALID_EDGES},
+    )
+    r = await c.patch(f"/api/flows/{flow_id}", headers=auth, json={"status": "draft"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "draft"
+
+
+async def test_run_invalid_active_flow_is_rejected_before_any_agent_call(env, monkeypatch):
+    from tests.support.fakes import FakeHarnessAgent
+
+    c, srv, auth = env
+    calls = {"n": 0}
+
+    async def _counting_call(self: FakeHarnessAgent, request: dict) -> dict:
+        calls["n"] += 1
+        return {"messages": [{"role": "assistant", "content": "fake reply"}]}
+
+    monkeypatch.setattr(FakeHarnessAgent, "call", _counting_call, raising=False)
+    agent_id = (await c.post("/api/agents", headers=auth, json={"name": "rv"})).json()["agent_id"]
+    flow_id = await _new_flow(c, auth)
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _valid_nodes(agent_id), "edges": _VALID_EDGES, "status": "active"},
+    )
+    assert r.status_code == 200, r.text
+    # Saved after activation: now invalid but still active.
+    await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": _INVALID_NODES, "edges": _INVALID_EDGES},
+    )
+    r = await c.post(f"/api/flows/{flow_id}/run", headers=auth, json={"input": {}})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].startswith("flow has ")
+    assert calls["n"] == 0
+    with srv.services.db.connect() as conn:
+        n = conn.execute(
+            "SELECT COUNT(*) AS c FROM flow_runs WHERE flow_id = ?", (flow_id,)
+        ).fetchone()["c"]
+    assert n == 0

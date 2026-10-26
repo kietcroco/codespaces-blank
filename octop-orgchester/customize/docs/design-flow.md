@@ -199,6 +199,7 @@ dùng cho các field JSON khác trong Octop.
 | PATCH | `/api/flows/{flow_id}` | sửa `{name?, description?, nodes?, edges?, status?}` |
 | DELETE | `/api/flows/{flow_id}` | xoá (cascade `flow_runs`/`flow_run_steps`) |
 | POST | `/api/flows/{flow_id}/run` | chạy đồng bộ `{input?: dict}` → `FlowRunResult` (yêu cầu `status == "active"`, nếu không trả `409 FLOW_NOT_ACTIVE`) |
+| POST | `/api/flows/{flow_id}/validate` | kiểm tra tĩnh `{nodes?, edges?}` (bỏ trống ⇒ đồ thị đã lưu) → `{valid, issues:[{level, code, message, node_id}]}`; `valid` = không có issue mức `error` |
 | GET | `/api/flows/{flow_id}/runs` | lịch sử chạy (tóm tắt) |
 | GET | `/api/flows/{flow_id}/runs/{run_id}` | 1 run đầy đủ (từng step) |
 
@@ -275,6 +276,21 @@ trong khi run vẫn tiếp tục chạy ở server.
 - Trigger tự động: để CronJobs gọi `POST .../run` là đủ cho "theo
   lịch"; webhook/conversation để sau nếu có nhu cầu cụ thể.
 
+**Validate (kiểm tra tĩnh).** `customize/backend/flows/validate.py` (hàm thuần,
+không FastAPI/DB, không bao giờ raise với dữ liệu hỏng) trả danh sách `FlowIssue`
+(`level`, `code`, `message`, `node_id`). Mức `error`: `duplicate_node_id`,
+`unknown_node_type`, `no_trigger`, `multiple_triggers`, `agent_missing_agent`,
+`agent_missing_prompt`, `agent_bad_retry`, `condition_bad_op`,
+`condition_missing_left`, `condition_bad_handle`, `edge_dangling`, `cycle`.
+Mức `warning`: `unreachable_node`, `condition_branch_missing`,
+`multiple_outgoing`. Chốt chặn (lỗi 422, `detail` dạng
+`"flow has N validation error(s): <lỗi đầu tiên>"`): (1) `PATCH` với
+`status = "active"` — validate đồ thị gửi kèm trong cùng request nếu có, nếu không
+thì đồ thị đã lưu, trước khi ghi bất cứ gì; (2) `POST .../run` — validate trước
+khi gọi engine, nên flow đang `active` nhưng bị sửa thành sai không chạy được.
+Bản nháp không bao giờ bị chặn: lưu node/edge, đổi tên, và chuyển về `draft` luôn
+được phép.
+
 ## 11. Danh sách file (tổng kết)
 
 **File mới (soạn trong `customize/`, `install.sh` copy — không bao giờ
@@ -284,6 +300,8 @@ sửa trực tiếp):**
 |---|---|
 | `customize/backend/migrations/023_flow.sql` + `.pg.sql` | `Octop/src/octop/infra/db/migrations/023_flow.sql` + `.pg.sql` |
 | `customize/backend/flows/engine.py` | `Octop/src/octop/infra/flows/engine.py` |
+| `customize/backend/flows/validate.py` | `Octop/src/octop/infra/flows/validate.py` |
+| `customize/backend/tests/test_flow_validate.py` | `Octop/tests/unit/test_flow_validate.py` |
 | `customize/backend/routers/flow.py` | `Octop/src/octop/api/routers/flow.py` |
 | `customize/backend/tests/test_flow_engine.py` | `Octop/tests/unit/test_flow_engine.py` |
 | `customize/backend/tests/test_flow_api.py` | `Octop/tests/integration/test_flow_api.py` |
