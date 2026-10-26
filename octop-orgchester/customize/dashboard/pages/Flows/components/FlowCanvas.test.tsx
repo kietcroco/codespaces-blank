@@ -356,3 +356,54 @@ describe("FlowCanvas minimap", () => {
     });
   });
 });
+
+describe("FlowCanvas versions", () => {
+  const T = { id: "t", type: "trigger", position: { x: 0, y: 0 }, data: { label: "Start", config: {} } };
+  beforeEach(() => api.mockReset());
+  const patches = () =>
+    api.mock.calls.filter(([, o]) => (o as { method?: string } | undefined)?.method === "PATCH");
+
+  it("opens the versions drawer and reloads the canvas after a restore", async () => {
+    api.mockResolvedValueOnce({ flow_id: "fl_1", name: "Old", status: "draft", nodes: [T], edges: [] }); // initial GET
+    api.mockResolvedValueOnce([
+      { version_no: 1, label: "First", kind: "manual", created_at: 1, node_count: 1, edge_count: 0 },
+    ]); // GET versions
+    render(<FlowCanvas flowId="fl_1" />);
+    await screen.findByText("Start");
+    await userEvent.click(screen.getByRole("button", { name: "Versions" }));
+    expect(await screen.findByText("Flow versions")).toBeInTheDocument();
+    expect(await screen.findByText("First")).toBeInTheDocument();
+
+    api.mockResolvedValueOnce({ flow: {}, restored_from: 1, backup_version_no: 2 }); // restore
+    api.mockResolvedValueOnce({
+      flow_id: "fl_1", name: "Restored name", status: "draft",
+      nodes: [{ id: "r", type: "end", position: { x: 0, y: 0 }, data: { label: "Restored node", config: {} } }],
+      edges: [],
+    }); // refetch of the flow
+    api.mockResolvedValue([]); // list refresh
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Yes, restore" }));
+
+    expect(await screen.findByText("Restored node")).toBeInTheDocument();
+    expect(screen.getByLabelText("Flow name")).toHaveValue("Restored name");
+    expect(api).toHaveBeenCalledWith("/flows/fl_1/versions/1/restore", expect.objectContaining({ method: "POST" }));
+    expect(patches()).toHaveLength(0);
+  });
+
+  it("saves nodes with the unchanged PATCH body before a snapshot", async () => {
+    api.mockResolvedValueOnce({ flow_id: "fl_1", name: "F", status: "draft", nodes: [T], edges: [] });
+    api.mockResolvedValue([]);
+    render(<FlowCanvas flowId="fl_1" />);
+    await screen.findByText("Start");
+    await userEvent.click(screen.getByRole("button", { name: "Versions" }));
+    await screen.findByText("No versions yet");
+    await userEvent.click(screen.getByRole("button", { name: "Save version" }));
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith(
+        "/flows/fl_1",
+        expect.objectContaining({ method: "PATCH", body: JSON.stringify({ nodes: [T], edges: [] }) }),
+      ),
+    );
+    expect(api).not.toHaveBeenCalledWith("/flows/fl_1/validate", expect.anything());
+  });
+});

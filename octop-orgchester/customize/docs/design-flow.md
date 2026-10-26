@@ -361,6 +361,10 @@ bản đó trả step `failed` như thường.
   nút "Docs" trên toolbar mở drawer soạn/xem trước (markdown qua
   `LazyMarkdown`) tài liệu của flow, lưu bằng `PATCH` chỉ gồm
   `description`; trang danh sách chỉ hiện bản tóm tắt 1 dòng.
+- `customize/dashboard/pages/Flows/components/FlowVersionsDrawer.tsx`:
+  nút "Versions" trên toolbar mở drawer liệt kê phiên bản (mới nhất trước), "Save version"
+  lưu canvas trước rồi chụp phiên bản (nhãn tùy chọn), "Restore" (có xác nhận) khôi phục
+  rồi canvas tải lại đồ thị từ server; lỗi (vd. 422 khi flow đang active) giữ drawer mở.
 - Mẫu khởi tạo: nút "From template" trên trang danh sách mở modal với 3 mẫu
   (`flowTemplates.ts`: ask-agent, branch-on-reply, two-step-pipeline); chọn "Use"
   sẽ `POST /flows` (tên + mô tả markdown) rồi `PATCH` nodes/edges, các node agent

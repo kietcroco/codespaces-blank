@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type MouseEvent } from "react";
 import { Alert, Button, Dropdown, Input, Spin, Tag, type MenuProps } from "antd";
-import { BookText, CheckCircle2, FlaskConical, History, Play, Plus, Save as SaveIcon } from "lucide-react";
+import { BookText, CheckCircle2, FlaskConical, History, Layers, Play, Plus, Save as SaveIcon } from "lucide-react";
 import {
   ReactFlow,
   Background,
@@ -22,6 +22,7 @@ import "@xyflow/react/dist/style.css";
 import { message } from "@/utils/antdMessage";
 import { request } from "../../../api/request";
 import FlowDocsDrawer from "./FlowDocsDrawer";
+import FlowVersionsDrawer from "./FlowVersionsDrawer";
 import NodeInspectorDrawer from "./NodeInspectorDrawer";
 import RunResultDrawer from "./RunResultDrawer";
 
@@ -202,6 +203,7 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
   const [issues, setIssues] = useState<FlowIssue[]>([]);
   const [description, setDescription] = useState("");
   const [docsOpen, setDocsOpen] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
 
   // Display-only copy of `nodes` with an outline on nodes that have issues.
   // `nodes` itself stays unstyled so Save never persists the outline.
@@ -219,12 +221,14 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
     });
   }, [nodes, issues]);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
+  // Fetches the stored flow into canvas state. Used by the initial load and by
+  // the versions drawer after a restore. `isActive` lets the effect drop a
+  // stale response when flowId changes or the component unmounts.
+  const loadFlow = useCallback(
+    async (isActive: () => boolean = () => true) => {
       try {
         const data = await request<FlowDetail>(`/flows/${flowId}`);
-        if (!active) return;
+        if (!isActive()) return;
         setNodes(data.nodes ?? []);
         setEdges(data.edges ?? []);
         setFlowName(data.name ?? "");
@@ -232,13 +236,27 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         setFlowStatus(data.status ?? "draft");
         setDescription(data.description ?? "");
       } finally {
-        if (active) setLoading(false);
+        if (isActive()) setLoading(false);
       }
-    })();
+    },
+    [flowId],
+  );
+
+  useEffect(() => {
+    let active = true;
+    void loadFlow(() => active);
     return () => {
       active = false;
     };
-  }, [flowId]);
+  }, [loadFlow]);
+
+  // After a restore the stored graph changed under us: reload it and drop
+  // anything derived from the old canvas.
+  const handleRestored = async () => {
+    setInspectorNode(null);
+    setIssues([]);
+    await loadFlow();
+  };
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -459,6 +477,9 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         <Button icon={<BookText size={14} />} onClick={() => setDocsOpen(true)}>
           Docs
         </Button>
+        <Button icon={<Layers size={14} />} onClick={() => setVersionsOpen(true)}>
+          Versions
+        </Button>
         <Tag color={flowStatus === "active" ? "green" : "default"}>
           {flowStatus === "active" ? "Active" : "Draft"}
         </Tag>
@@ -524,6 +545,13 @@ export default function FlowCanvas({ flowId }: { flowId: string }): JSX.Element 
         description={description}
         onClose={() => setDocsOpen(false)}
         onSave={handleDocsSave}
+      />
+      <FlowVersionsDrawer
+        open={versionsOpen}
+        flowId={flowId}
+        onClose={() => setVersionsOpen(false)}
+        saveBeforeSnapshot={() => handleSave(false)}
+        onRestored={handleRestored}
       />
       <RunResultDrawer
         flowId={flowId}
