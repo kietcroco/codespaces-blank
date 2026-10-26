@@ -204,3 +204,12 @@ Không có patch và không có migration mới. Copy tay các file sau:
 ### Thêm mẫu flow khởi tạo ("From template") vào checkout đã cài sẵn
 
 Không có patch và không có migration. Copy tay `customize/dashboard/pages/Flows/{flowTemplates.ts,flowTemplates.test.ts}` (file mới) và `index.tsx`, `index.test.tsx` (đã đổi) → `Octop/dashboard/src/pages/Flows/`.
+
+### Thêm phiên bản flow (versions) vào checkout đã cài sẵn
+
+Có **migration mới** (chỉ thêm bảng `flow_versions`, không đụng dữ liệu cũ), không có patch. Copy tay:
+- `customize/backend/migrations/024_flow_versions.sql` và `024_flow_versions.pg.sql` → `Octop/src/octop/infra/db/migrations/` (file mới; nếu số `024` đã bị upstream chiếm, đổi số theo hướng dẫn ở mục "Upgrading" — vẫn phải lớn hơn mọi migration hiện có và đứng sau `023_flow`)
+- `customize/backend/routers/flow.py` (đã đổi) → `Octop/src/octop/api/routers/flow.py`
+- (tuỳ chọn) `customize/backend/tests/test_flow_api.py` → `Octop/tests/integration/`
+
+Khởi động lại server để migration chạy.

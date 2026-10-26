@@ -182,6 +182,29 @@ và `022_agency.pg.sql`). **Số `023` phải tự xác nhận lại tại thờ
 cài** — `install.sh` đã có cơ chế từ chối nếu upstream Octop chiếm số
 đó trước (xem README "Upgrading").
 
+Phiên bản flow (snapshot bất biến của đồ thị) nằm ở bảng riêng, migration
+`024_flow_versions.sql` (+ `.pg.sql`, chỉ khác kiểu cột `id`):
+
+```sql
+CREATE TABLE flow_versions (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_id    TEXT NOT NULL UNIQUE,
+  flow_id       TEXT NOT NULL REFERENCES flows(flow_id) ON DELETE CASCADE,
+  version_no    INTEGER NOT NULL,  -- tăng dần theo flow, không dùng lại
+  label         TEXT,
+  kind          TEXT NOT NULL,  -- manual | auto
+  nodes_json    TEXT NOT NULL,
+  edges_json    TEXT NOT NULL,
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    INTEGER NOT NULL,
+  UNIQUE(flow_id, version_no)
+);
+
+CREATE INDEX idx_flow_versions_flow_id ON flow_versions(flow_id);
+
+UPDATE _schema_version SET version = 24;
+```
+
 `nodes_json`/`edges_json` lưu đúng mảng `Node`/`Edge` mà
 `@xyflow/react` dùng ở frontend (xem mục 8) — không có bảng con cho
 từng node, giống cách orchester lưu `flows.nodes`/`flows.edges` dạng
@@ -202,6 +225,18 @@ dùng cho các field JSON khác trong Octop.
 | POST | `/api/flows/{flow_id}/validate` | kiểm tra tĩnh `{nodes?, edges?}` (bỏ trống ⇒ đồ thị đã lưu) → `{valid, issues:[{level, code, message, node_id}]}`; `valid` = không có issue mức `error` |
 | GET | `/api/flows/{flow_id}/runs` | lịch sử chạy (tóm tắt) |
 | GET | `/api/flows/{flow_id}/runs/{run_id}` | 1 run đầy đủ (từng step) |
+| GET | `/api/flows/{flow_id}/versions` | liệt kê phiên bản, mới nhất trước: `[{version_no, label, kind, created_at, node_count, edge_count}]` (không kèm đồ thị) |
+| POST | `/api/flows/{flow_id}/versions` | lưu phiên bản `{label?}` (cắt khoảng trắng, rỗng ⇒ `null`, dài hơn 100 ký tự ⇒ 422) của đồ thị **đã lưu**; `201` + tóm tắt; `kind = "manual"` |
+| GET | `/api/flows/{flow_id}/versions/{version_no}` | 1 phiên bản: tóm tắt + `nodes`/`edges`; không có ⇒ 404 |
+| POST | `/api/flows/{flow_id}/versions/{version_no}/restore` | khôi phục ⇒ `{flow, restored_from, backup_version_no}` |
+
+Phiên bản: `version_no` = `MAX+1` theo flow (không bao giờ dùng lại số), chỉ giữ
+50 phiên bản mới nhất mỗi flow (xoá cũ nhất). Restore chỉ ghi đè `nodes`/`edges`
+(không đổi `name`/`description`/`status`); trong cùng một transaction nó tự lưu
+đồ thị hiện tại thành phiên bản `auto` nhãn `Before restore to v<N>` (nên hoàn
+tác được bằng cách restore bản backup đó). Nếu flow đang `active` mà phiên bản
+có lỗi validate (cùng cổng với Phase #3) thì trả `422` và không thay đổi gì;
+flow `draft` luôn restore được. Xoá flow cũng xoá các phiên bản.
 
 Ownership guard giống hệt `_require_owned_agency()` của Agency — copy
 pattern, đổi tên bảng.

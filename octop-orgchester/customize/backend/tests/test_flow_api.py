@@ -1038,3 +1038,240 @@ async def test_null_condition_operands_are_coerced_not_500(env):
         assert r.json()["status"] == "succeeded", r.json()
         # left renders "" (missing key) and right None coerces to "": equal
         assert r.json()["steps"][-1]["node_id"] == "y"
+
+
+# --- Flow versions: snapshots, restore, cap, isolation ----------------------
+
+_GRAPH_A = [{"id": "t", "type": "trigger", "config": {}}]
+_GRAPH_B = _valid_nodes("ag_x")
+
+
+async def _set_graph(c, auth, flow_id, nodes, edges=None, **extra):
+    r = await c.patch(
+        f"/api/flows/{flow_id}",
+        headers=auth,
+        json={"nodes": nodes, "edges": edges or [], **extra},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def test_create_and_list_versions_newest_first(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await _set_graph(c, auth, flow_id, _GRAPH_B, _VALID_EDGES)
+    r1 = await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={"label": "  first  "})
+    assert r1.status_code == 201, r1.text
+    assert r1.json()["version_no"] == 1
+    assert r1.json()["label"] == "first"
+    assert r1.json()["kind"] == "manual"
+    assert r1.json()["node_count"] == 3
+    assert r1.json()["edge_count"] == 2
+    assert isinstance(r1.json()["created_at"], int)
+    r2 = await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={"label": "   "})
+    assert r2.status_code == 201
+    assert r2.json()["version_no"] == 2
+    assert r2.json()["label"] is None
+    r3 = await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+    assert r3.status_code == 201
+    assert r3.json()["label"] is None
+    r = await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={"label": "x" * 101})
+    assert r.status_code == 422
+    r = await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={"label": "x" * 100})
+    assert r.status_code == 201
+    listing = await c.get(f"/api/flows/{flow_id}/versions", headers=auth)
+    assert listing.status_code == 200
+    assert [v["version_no"] for v in listing.json()] == [4, 3, 2, 1]
+    assert set(listing.json()[0]) == {
+        "version_no",
+        "label",
+        "kind",
+        "created_at",
+        "node_count",
+        "edge_count",
+    }
+
+
+async def test_version_snapshot_is_immutable_after_flow_edit(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await _set_graph(c, auth, flow_id, _GRAPH_B, _VALID_EDGES)
+    await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={"label": "snap"})
+    await _set_graph(c, auth, flow_id, _GRAPH_A, [])
+    r = await c.get(f"/api/flows/{flow_id}/versions/1", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["nodes"] == _GRAPH_B
+    assert r.json()["edges"] == _VALID_EDGES
+    assert r.json()["label"] == "snap"
+    assert r.json()["node_count"] == 3
+
+
+async def test_get_version_unknown_is_404(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    r = await c.get(f"/api/flows/{flow_id}/versions/7", headers=auth)
+    assert r.status_code == 404
+    r = await c.post(f"/api/flows/{flow_id}/versions/7/restore", headers=auth)
+    assert r.status_code == 404
+
+
+async def test_restore_replaces_graph_and_creates_backup(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth, name="Keep me")
+    await _set_graph(c, auth, flow_id, _GRAPH_B, _VALID_EDGES, description="desc")
+    await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={"label": "good"})
+    await _set_graph(c, auth, flow_id, _GRAPH_A, [], status="active")
+    r = await c.post(f"/api/flows/{flow_id}/versions/1/restore", headers=auth)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["restored_from"] == 1
+    assert body["backup_version_no"] == 2
+    assert body["flow"]["flow_id"] == flow_id
+    assert body["flow"]["nodes"] == _GRAPH_B
+    assert body["flow"]["edges"] == _VALID_EDGES
+    assert body["flow"]["name"] == "Keep me"
+    assert body["flow"]["description"] == "desc"
+    assert body["flow"]["status"] == "active"
+    got = await c.get(f"/api/flows/{flow_id}", headers=auth)
+    assert got.json() == body["flow"]
+    backup = await c.get(f"/api/flows/{flow_id}/versions/2", headers=auth)
+    assert backup.json()["kind"] == "auto"
+    assert backup.json()["label"] == "Before restore to v1"
+    assert backup.json()["nodes"] == _GRAPH_A
+    assert backup.json()["edges"] == []
+
+
+async def test_restore_is_undoable(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await _set_graph(c, auth, flow_id, _GRAPH_B, _VALID_EDGES)
+    await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={"label": "one"})
+    await _set_graph(c, auth, flow_id, _GRAPH_A, [])
+    before = (await c.get(f"/api/flows/{flow_id}", headers=auth)).json()
+    r = await c.post(f"/api/flows/{flow_id}/versions/1/restore", headers=auth)
+    assert r.json()["flow"]["nodes"] == _GRAPH_B
+    backup_no = r.json()["backup_version_no"]
+    r = await c.post(f"/api/flows/{flow_id}/versions/{backup_no}/restore", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["flow"]["nodes"] == before["nodes"]
+    assert r.json()["flow"]["edges"] == before["edges"]
+
+
+async def test_restore_invalid_version_into_active_flow_is_rejected_unchanged(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await _set_graph(c, auth, flow_id, _INVALID_NODES, _INVALID_EDGES)
+    await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={"label": "bad"})
+    await _set_graph(c, auth, flow_id, _GRAPH_B, _VALID_EDGES, status="active")
+    r = await c.post(f"/api/flows/{flow_id}/versions/1/restore", headers=auth)
+    assert r.status_code == 422, r.text
+    assert "restored version has 2 validation error(s): " in r.text
+    assert "deactivate the flow first or pick another version" in r.text
+    listing = await c.get(f"/api/flows/{flow_id}/versions", headers=auth)
+    assert [v["version_no"] for v in listing.json()] == [1]
+    flow = (await c.get(f"/api/flows/{flow_id}", headers=auth)).json()
+    assert flow["nodes"] == _GRAPH_B
+    assert flow["edges"] == _VALID_EDGES
+    assert flow["status"] == "active"
+
+
+async def test_restore_into_draft_allows_invalid_version(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    await _set_graph(c, auth, flow_id, _INVALID_NODES, _INVALID_EDGES)
+    await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+    await _set_graph(c, auth, flow_id, _GRAPH_B, _VALID_EDGES)
+    r = await c.post(f"/api/flows/{flow_id}/versions/1/restore", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["flow"]["nodes"] == _INVALID_NODES
+    assert r.json()["flow"]["status"] == "draft"
+
+
+async def test_version_numbers_never_reused_and_capped(env):
+    c, srv, auth = env
+    flow_id = await _new_flow(c, auth)
+    for _ in range(55):
+        r = await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+        assert r.status_code == 201, r.text
+    listing = await c.get(f"/api/flows/{flow_id}/versions", headers=auth)
+    assert [v["version_no"] for v in listing.json()] == list(range(55, 5, -1))
+    with srv.services.db.connect() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) AS c FROM flow_versions WHERE flow_id = ?", (flow_id,)
+        ).fetchone()["c"]
+    assert count == 50
+    r = await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+    assert r.json()["version_no"] == 56
+    assert (await c.get(f"/api/flows/{flow_id}/versions/5", headers=auth)).status_code == 404
+
+
+async def test_restore_backup_obeys_cap(env):
+    c, _, auth = env
+    flow_id = await _new_flow(c, auth)
+    for _ in range(50):
+        await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+    r = await c.post(f"/api/flows/{flow_id}/versions/50/restore", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["backup_version_no"] == 51
+    listing = await c.get(f"/api/flows/{flow_id}/versions", headers=auth)
+    assert len(listing.json()) == 50
+    assert listing.json()[0]["version_no"] == 51
+    assert listing.json()[-1]["version_no"] == 2
+
+
+async def test_versions_are_isolated_per_flow_and_user(env):
+    c, _, auth = env
+    flow_a = await _new_flow(c, auth, name="A")
+    flow_b = await _new_flow(c, auth, name="B")
+    await c.post(f"/api/flows/{flow_a}/versions", headers=auth, json={"label": "a1"})
+    other_auth = await create_user(c, auth, username="versionintruder")
+    base = f"/api/flows/{flow_a}/versions"
+    for r in (
+        await c.get(base, headers=other_auth),
+        await c.post(base, headers=other_auth, json={}),
+        await c.get(f"{base}/1", headers=other_auth),
+        await c.post(f"{base}/1/restore", headers=other_auth),
+    ):
+        assert r.status_code in (403, 404), r.text
+    assert (await c.get(f"/api/flows/{flow_b}/versions/1", headers=auth)).status_code == 404
+    assert (
+        await c.post(f"/api/flows/{flow_b}/versions/1/restore", headers=auth)
+    ).status_code == 404
+    assert (await c.get(f"/api/flows/{flow_b}/versions", headers=auth)).json() == []
+    # The intruder attempts left flow A versions untouched.
+    assert len((await c.get(base, headers=auth)).json()) == 1
+
+
+async def test_delete_flow_removes_versions(env):
+    c, srv, auth = env
+    flow_id = await _new_flow(c, auth)
+    await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+    await c.post(f"/api/flows/{flow_id}/versions", headers=auth, json={})
+    r = await c.delete(f"/api/flows/{flow_id}", headers=auth)
+    assert r.status_code == 204
+    with srv.services.db.connect() as conn:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) AS c FROM flow_versions WHERE flow_id = ?", (flow_id,)
+            ).fetchone()["c"]
+            == 0
+        )
+
+
+async def test_flow_versions_table_exists_and_schema_version_24(env):
+    _, srv, _ = env
+    with srv.services.db.connect() as conn:
+        assert conn.execute("SELECT version FROM _schema_version").fetchone()[0] >= 24
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(flow_versions)").fetchall()}
+    assert cols == {
+        "id",
+        "version_id",
+        "flow_id",
+        "version_no",
+        "label",
+        "kind",
+        "nodes_json",
+        "edges_json",
+        "created_by",
+        "created_at",
+    }

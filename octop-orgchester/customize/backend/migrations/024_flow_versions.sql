@@ -1,0 +1,20 @@
+-- Schema v24: immutable snapshots of a flow's graph (flow versions).
+-- Same style as 023_flow.sql. Postgres variant: 024_flow_versions.pg.sql.
+
+CREATE TABLE flow_versions (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_id    TEXT NOT NULL UNIQUE,
+  flow_id       TEXT NOT NULL REFERENCES flows(flow_id) ON DELETE CASCADE,
+  version_no    INTEGER NOT NULL,
+  label         TEXT,
+  kind          TEXT NOT NULL,  -- manual | auto
+  nodes_json    TEXT NOT NULL,
+  edges_json    TEXT NOT NULL,
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    INTEGER NOT NULL,
+  UNIQUE(flow_id, version_no)
+);
+
+CREATE INDEX idx_flow_versions_flow_id ON flow_versions(flow_id);
+
+UPDATE _schema_version SET version = 24;

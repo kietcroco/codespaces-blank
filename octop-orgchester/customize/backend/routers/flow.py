@@ -37,6 +37,8 @@ from octop.infra.utils.ulid import new_short_id
 router = APIRouter()
 
 DESCRIPTION_MAX_LENGTH = 20000
+MAX_VERSIONS_PER_FLOW = 50
+LABEL_MAX_LENGTH = 100
 
 
 class FlowCreateBody(BaseModel):
@@ -55,6 +57,10 @@ class FlowPatchBody(BaseModel):
 class FlowValidateBody(BaseModel):
     nodes: list[dict[str, Any]] | None = None
     edges: list[dict[str, Any]] | None = None
+
+
+class FlowVersionCreateBody(BaseModel):
+    label: str | None = Field(default=None, max_length=LABEL_MAX_LENGTH)
 
 
 class FlowRunBody(BaseModel):
@@ -77,6 +83,61 @@ def _flow_payload(row: Any) -> dict[str, Any]:
         "edges": json.loads(row["edges_json"]),
         "status": row["status"],
     }
+
+
+def _version_summary(row: Any) -> dict[str, Any]:
+    return {
+        "version_no": row["version_no"],
+        "label": row["label"],
+        "kind": row["kind"],
+        "created_at": row["created_at"],
+        "node_count": len(json.loads(row["nodes_json"])),
+        "edge_count": len(json.loads(row["edges_json"])),
+    }
+
+
+def _insert_version(
+    conn: Any,
+    flow_id: str,
+    user_id: int | None,
+    label: str | None,
+    kind: str,
+    nodes_json: str,
+    edges_json: str,
+) -> int:
+    """Insert one snapshot inside the caller's transaction and return its number.
+
+    Numbers are MAX+1 per flow and never reused; afterwards only the newest
+    ``MAX_VERSIONS_PER_FLOW`` rows of the flow are kept.
+    """
+    version_no = (
+        conn.execute(
+            "SELECT COALESCE(MAX(version_no), 0) AS m FROM flow_versions WHERE flow_id = ?",
+            (flow_id,),
+        ).fetchone()["m"]
+        + 1
+    )
+    conn.execute(
+        "INSERT INTO flow_versions(version_id, flow_id, version_no, label, kind, "
+        "nodes_json, edges_json, created_by, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            f"fv_{new_short_id(6)}",
+            flow_id,
+            version_no,
+            label,
+            kind,
+            nodes_json,
+            edges_json,
+            user_id,
+            int(time.time()),
+        ),
+    )
+    conn.execute(
+        "DELETE FROM flow_versions WHERE flow_id = ? AND version_no <= ?",
+        (flow_id, version_no - MAX_VERSIONS_PER_FLOW),
+    )
+    return version_no
 
 
 def _step_result_payload(step: StepResult) -> dict[str, Any]:
@@ -345,7 +406,135 @@ async def delete_flow(
         for run_row in run_rows:
             conn.execute("DELETE FROM flow_run_steps WHERE run_id = ?", (run_row["run_id"],))
         conn.execute("DELETE FROM flow_runs WHERE flow_id = ?", (flow_id,))
+        conn.execute("DELETE FROM flow_versions WHERE flow_id = ?", (flow_id,))
         conn.execute("DELETE FROM flows WHERE flow_id = ?", (flow_id,))
+
+
+@router.post("/flows/{flow_id}/versions", status_code=201, summary="Save a flow version")
+async def create_flow_version(
+    flow_id: str,
+    body: FlowVersionCreateBody,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    _require_owned_flow(server, user, flow_id)
+    label = (body.label or "").strip() or None
+    with server.services.db.transaction() as conn:
+        # Snapshot the stored graph, read inside the same transaction.
+        flow_row = conn.execute(
+            "SELECT nodes_json, edges_json FROM flows WHERE flow_id = ?", (flow_id,)
+        ).fetchone()
+        if flow_row is None:
+            raise OctopError(ErrorCode.NOT_FOUND, f"flow {flow_id!r} not found")
+        version_no = _insert_version(
+            conn,
+            flow_id,
+            user.id,
+            label,
+            "manual",
+            flow_row["nodes_json"],
+            flow_row["edges_json"],
+        )
+        row = conn.execute(
+            "SELECT * FROM flow_versions WHERE flow_id = ? AND version_no = ?",
+            (flow_id, version_no),
+        ).fetchone()
+    return _version_summary(row)
+
+
+@router.get("/flows/{flow_id}/versions", summary="List a flow's versions")
+async def list_flow_versions(
+    flow_id: str,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> list[dict[str, Any]]:
+    _require_owned_flow(server, user, flow_id)
+    with server.services.db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM flow_versions WHERE flow_id = ? ORDER BY version_no DESC",
+            (flow_id,),
+        ).fetchall()
+        return [_version_summary(row) for row in rows]
+
+
+@router.get("/flows/{flow_id}/versions/{version_no}", summary="Get one flow version")
+async def get_flow_version(
+    flow_id: str,
+    version_no: int,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    _require_owned_flow(server, user, flow_id)
+    with server.services.db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM flow_versions WHERE flow_id = ? AND version_no = ?",
+            (flow_id, version_no),
+        ).fetchone()
+    if row is None:
+        raise OctopError(ErrorCode.NOT_FOUND, f"version {version_no} not found")
+    payload = _version_summary(row)
+    payload["nodes"] = json.loads(row["nodes_json"])
+    payload["edges"] = json.loads(row["edges_json"])
+    return payload
+
+
+@router.post(
+    "/flows/{flow_id}/versions/{version_no}/restore",
+    summary="Restore a flow version (backs up the current graph first)",
+)
+async def restore_flow_version(
+    flow_id: str,
+    version_no: int,
+    user: Any = Depends(current_user),
+    server: Any = Depends(get_server),
+) -> dict[str, Any]:
+    _require_owned_flow(server, user, flow_id)
+    with server.services.db.transaction() as conn:
+        flow_row = conn.execute("SELECT * FROM flows WHERE flow_id = ?", (flow_id,)).fetchone()
+        if flow_row is None:
+            raise OctopError(ErrorCode.NOT_FOUND, f"flow {flow_id!r} not found")
+        version_row = conn.execute(
+            "SELECT * FROM flow_versions WHERE flow_id = ? AND version_no = ?",
+            (flow_id, version_no),
+        ).fetchone()
+        if version_row is None:
+            raise OctopError(ErrorCode.NOT_FOUND, f"version {version_no} not found")
+        if flow_row["status"] == "active":
+            issues = validate_graph(
+                *_to_engine_graph(
+                    json.loads(version_row["nodes_json"]),
+                    json.loads(version_row["edges_json"]),
+                )
+            )
+            if has_errors(issues):
+                errors = [i for i in issues if i.level == "error"]
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"restored version has {len(errors)} validation error(s): "
+                        f"{errors[0].message}; deactivate the flow first or pick "
+                        "another version"
+                    ),
+                )
+        backup_no = _insert_version(
+            conn,
+            flow_id,
+            user.id,
+            f"Before restore to v{version_no}",
+            "auto",
+            flow_row["nodes_json"],
+            flow_row["edges_json"],
+        )
+        conn.execute(
+            "UPDATE flows SET nodes_json = ?, edges_json = ?, updated_at = ? WHERE flow_id = ?",
+            (version_row["nodes_json"], version_row["edges_json"], int(time.time()), flow_id),
+        )
+        new_row = conn.execute("SELECT * FROM flows WHERE flow_id = ?", (flow_id,)).fetchone()
+    return {
+        "flow": _flow_payload(new_row),
+        "restored_from": version_no,
+        "backup_version_no": backup_no,
+    }
 
 
 @router.post("/flows/{flow_id}/validate", summary="Statically validate a flow graph")
